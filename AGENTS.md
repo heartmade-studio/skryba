@@ -1,4 +1,4 @@
-# AGENTS.md — heartmade-skryba
+# AGENTS.md — skryba
 
 Public, open-source macOS menu-bar app (Swift 6, SwiftUI + AppKit, no dependencies) for
 push-to-talk dictation via Groq Whisper. Published under the `heartmade-studio` GitHub org as a

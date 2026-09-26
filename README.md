@@ -46,8 +46,8 @@ release      ──► discard if the level meter heard no voice
 ## Build & install
 
 ```bash
-git clone https://github.com/heartmade-studio/heartmade-skryba.git
-cd heartmade-skryba
+git clone https://github.com/heartmade-studio/skryba.git
+cd skryba
 scripts/build.sh --install
 ```
 
