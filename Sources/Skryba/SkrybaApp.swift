@@ -69,7 +69,7 @@ struct MenuContent: View {
 
 enum Heartmade {
     /// Tagged so heartmade.pl analytics can tell visits that came from Skryba.
-    static let url = URL(string: "https://heartmade.pl/?utm_source=skryba&utm_medium=app")!
+    static let url = URL(string: "https://heartmade.pl/en/?utm_source=skryba&utm_medium=app")!
 }
 
 private extension NSImage {

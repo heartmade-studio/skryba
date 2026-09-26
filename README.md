@@ -7,7 +7,7 @@ It records while you hold the Fn (🌐) key, or a shortcut of your choice. It se
 [Groq](https://groq.com)'s hosted **Whisper large-v3-turbo** model and pastes the transcript into
 the text field you were typing in.
 
-Vibe-coded by [Heartmade](https://heartmade.pl) as a readable reference app: no dependencies,
+Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
 16 Swift files, about 1,600 lines including comments.
 
 **Status: 1.0.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
