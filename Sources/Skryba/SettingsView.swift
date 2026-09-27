@@ -37,10 +37,45 @@ struct SettingsView: View {
         _apiKeyDraft = State(initialValue: controller.settings.apiKey)
     }
 
-    var body: some View {
-        @Bindable var settings = controller.settings
+    private enum Tab: String, CaseIterable {
+        case general = "General"
+        case dictation = "Dictation"
+        case cleanup = "AI Cleanup"
+    }
 
-        Form {
+    @AppStorage("settingsTab") private var tab = Tab.general
+
+    /// Tabs keep each page short enough for a laptop screen; the window resizes to the open tab.
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $tab) {
+                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .padding(.top, 16)
+
+            Group {
+                switch tab {
+                case .general: generalTab
+                case .dictation: dictationTab
+                case .cleanup: cleanupTab
+                }
+            }
+            .formStyle(.grouped)
+            .scrollDisabled(true)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HeartmadeCredit()
+                .padding(.bottom, 16)
+        }
+        .frame(width: 500)
+    }
+
+    private var generalTab: some View {
+        @Bindable var settings = controller.settings
+        return Form {
             Section("Groq") {
                 HStack {
                     SecureField("API key", text: $apiKeyDraft, prompt: Text("gsk_…"))
@@ -61,50 +96,6 @@ struct SettingsView: View {
                 }
                 Link("Get a free key at console.groq.com", destination: URL(string: "https://console.groq.com/keys")!)
                     .font(.callout)
-            }
-
-            Section("Dictation") {
-                Picker("Hold to dictate", selection: $settings.trigger) {
-                    Text("Fn (🌐) key").tag(Settings.Trigger.fn)
-                    Text("Custom shortcut").tag(Settings.Trigger.shortcut)
-                }
-                .onChange(of: settings.trigger) { controller.applyTrigger() }
-
-                switch settings.trigger {
-                case .fn:
-                    if !controller.fnKeyFree {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("macOS also acts on 🌐. Set **Keyboard → Press 🌐 key to → Do Nothing**.")
-                                .font(.callout)
-                                .foregroundStyle(.orange)
-                            Spacer()
-                            Button("Open Keyboard Settings") { SystemSettings.open(.keyboard) }
-                        }
-                    }
-                case .shortcut:
-                    LabeledContent("Shortcut") {
-                        ShortcutRecorder(
-                            shortcut: $settings.shortcut,
-                            onBegin: controller.suspendHotKey,
-                            onEnd: controller.applyTrigger
-                        )
-                    }
-                    if let error = controller.hotKeyError {
-                        Text(error).foregroundStyle(.red).font(.callout)
-                    }
-                }
-                Picker("Language", selection: $settings.language) {
-                    ForEach(Settings.languages, id: \.code) { language in
-                        Text(language.name).tag(language.code)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    TextField("Vocabulary", text: $settings.vocabulary, axis: .vertical)
-                        .lineLimit(2...4)
-                    Text("Comma-separated names Whisper should spell right. Near misses like “Hrtmade” are fixed after transcription.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
 
             Section("Permissions") {
@@ -129,17 +120,103 @@ struct SettingsView: View {
                         try? enabled ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
                         launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
-            } header: {
-                Text("General")
-            } footer: {
-                HeartmadeCredit()
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 12)
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var dictationTab: some View {
+        @Bindable var settings = controller.settings
+        return Form {
+            Section {
+                Picker("Hold to dictate", selection: $settings.trigger) {
+                    Text("Fn (🌐) key").tag(Settings.Trigger.fn)
+                    Text("Custom shortcut").tag(Settings.Trigger.shortcut)
+                }
+                .onChange(of: settings.trigger) { controller.applyTrigger() }
+
+                switch settings.trigger {
+                case .fn:
+                    if !controller.fnKeyFree {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("macOS also acts on 🌐. Set **Keyboard → Press 🌐 key to → Do Nothing**.")
+                                .font(.callout)
+                                .foregroundStyle(.orange)
+                            Button("Open Keyboard Settings") { SystemSettings.open(.keyboard) }
+                        }
+                    }
+                case .shortcut:
+                    LabeledContent("Shortcut") {
+                        ShortcutRecorder(
+                            shortcut: $settings.shortcut,
+                            onBegin: controller.suspendHotKey,
+                            onEnd: controller.applyTrigger
+                        )
+                    }
+                    if let error = controller.hotKeyError {
+                        Text(error).foregroundStyle(.red).font(.callout)
+                    }
+                }
+                Picker("Language", selection: $settings.language) {
+                    ForEach(Settings.languages, id: \.code) { language in
+                        Text(language.name).tag(language.code)
+                    }
+                }
+            }
+
+            Section {
+                TextField("Vocabulary", text: $settings.vocabulary, prompt: Text("Heartmade, Groq, …"), axis: .vertical)
+                    .labelsHidden()
+                    .lineLimit(1...4)
+            } header: {
+                Text("Vocabulary")
+            } footer: {
+                FootnoteText("Comma-separated names Whisper should spell right. Near misses like “Hrtmade” are fixed after transcription.")
+            }
+        }
+    }
+
+    private var cleanupTab: some View {
+        @Bindable var settings = controller.settings
+        let defaultInstructions = TextCleanup.defaultInstructions(language: settings.language)
+        return Form {
+            Section {
+                Toggle("Clean up punctuation and style", isOn: $settings.cleanupEnabled)
+            } footer: {
+                FootnoteText("""
+                    A Groq language model adds punctuation, fixes misheard words and removes fillers like “yyy”. \
+                    It's a second request per dictation, so it's a little slower and costs a little: roughly \
+                    $0.20 per 1,000 dictations with GPT-OSS, $0.80 with Qwen.
+                    """)
+            }
+
+            if settings.cleanupEnabled {
+                Section {
+                    Picker("Model", selection: $settings.cleanupModel) {
+                        ForEach(TextCleanup.Model.allCases) { model in
+                            Text(model.displayName).tag(model)
+                        }
+                    }
+                }
+
+                Section {
+                    TextEditor(text: $settings.cleanupInstructions)
+                        .font(.callout)
+                        .frame(height: 150)
+                        .scrollDisabled(false) // the form doesn't scroll, but long instructions must
+                        .scrollContentBackground(.hidden)
+                } header: {
+                    HStack {
+                        Text("Instructions")
+                        Spacer()
+                        Button("Reset to default") { settings.cleanupInstructions = defaultInstructions }
+                            .disabled(settings.cleanupInstructions == defaultInstructions)
+                            .controlSize(.small)
+                    }
+                } footer: {
+                    FootnoteText("Your vocabulary is added to these instructions automatically.")
+                }
+            }
+        }
     }
 }
 
@@ -155,12 +232,29 @@ private struct HeartmadeCredit: View {
     }
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text("Skryba \(version) · Vibe-coded by **Heartmade**")
+        HStack(spacing: 4) {
+            Text("Skryba \(version) · Vibe-coded by **Heartmade** ·")
+                .foregroundStyle(.secondary)
             Link("heartmade.pl", destination: Heartmade.url)
         }
         .font(.callout)
-        .foregroundStyle(.secondary)
+    }
+}
+
+/// Explanatory text under a settings section, aligned with the section's content.
+private struct FootnoteText: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

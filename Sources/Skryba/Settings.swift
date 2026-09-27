@@ -23,6 +23,16 @@ final class Settings {
     var playSounds: Bool {
         didSet { defaults.set(playSounds, forKey: Key.playSounds) }
     }
+    /// Off by default: it adds a second request per dictation, so it's slower and costs a little more.
+    var cleanupEnabled: Bool {
+        didSet { defaults.set(cleanupEnabled, forKey: Key.cleanupEnabled) }
+    }
+    var cleanupModel: TextCleanup.Model {
+        didSet { defaults.set(cleanupModel.rawValue, forKey: Key.cleanupModel) }
+    }
+    var cleanupInstructions: String {
+        didSet { defaults.set(cleanupInstructions, forKey: Key.cleanupInstructions) }
+    }
 
     @ObservationIgnored private let defaults = UserDefaults.standard
 
@@ -48,6 +58,9 @@ final class Settings {
         static let language = "language"
         static let vocabulary = "vocabulary"
         static let playSounds = "playSounds"
+        static let cleanupEnabled = "cleanupEnabled"
+        static let cleanupModel = "cleanupModel"
+        static let cleanupInstructions = "cleanupInstructions"
     }
 
     /// Returns false if the keychain refused the write; the previous key then stays in place.
@@ -64,9 +77,14 @@ final class Settings {
         trigger = defaults.string(forKey: Key.trigger).flatMap(Trigger.init) ?? .fn
         shortcut = defaults.data(forKey: Key.shortcut)
             .flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .default
-        language = defaults.string(forKey: Key.language) ?? Self.systemLanguage
+        let language = defaults.string(forKey: Key.language) ?? Self.systemLanguage
+        self.language = language
         vocabulary = defaults.string(forKey: Key.vocabulary) ?? ""
         playSounds = defaults.object(forKey: Key.playSounds) as? Bool ?? true
+        cleanupEnabled = defaults.bool(forKey: Key.cleanupEnabled)
+        cleanupModel = defaults.string(forKey: Key.cleanupModel).flatMap(TextCleanup.Model.init) ?? .gptOss
+        cleanupInstructions = defaults.string(forKey: Key.cleanupInstructions)
+            ?? TextCleanup.defaultInstructions(language: language)
     }
 
     /// Defaults to the Mac's language when Skryba lists it; otherwise lets Whisper detect it.

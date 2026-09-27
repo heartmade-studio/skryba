@@ -89,7 +89,11 @@ struct Vocabulary {
 
     /// Levenshtein distance: the number of single-character edits turning `a` into `b`.
     static func editDistance(_ a: String, _ b: String) -> Int {
-        let a = Array(a), b = Array(b)
+        editDistance(Array(a), Array(b))
+    }
+
+    /// Levenshtein distance over any sequence, e.g. words.
+    static func editDistance<Element: Equatable>(_ a: [Element], _ b: [Element]) -> Int {
         guard !a.isEmpty else { return b.count }
         guard !b.isEmpty else { return a.count }
         var previous = Array(0...b.count)

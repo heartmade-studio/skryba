@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Observation
+import os
 
 /// Orchestrates the dictation loop: key down → record → key up → Groq → paste.
 ///
@@ -15,6 +16,8 @@ final class AppController {
 
     private(set) var phase: Phase = .idle
     private(set) var lastTranscript: String?
+    /// The transcript before AI cleanup, when cleanup changed it; for comparing and recovering.
+    private(set) var lastRawTranscript: String?
     private(set) var hotKeyError: String?
     private(set) var microphoneGranted = false
     private(set) var accessibilityGranted = false
@@ -41,6 +44,7 @@ final class AppController {
     /// Recording starts at once, but the HUD and sound wait this long, so quick taps and Fn+key
     /// shortcuts (Fn+⌫, Fn+↑) don't flash anything.
     private static let feedbackDelay: TimeInterval = 0.2
+    private static let log = Logger(subsystem: "pl.heartmade.skryba", category: "dictation")
     /// Hard cap on one take, in case the key-up is never seen.
     static let maximumRecordingDuration: TimeInterval = 5 * 60
 
@@ -254,9 +258,9 @@ final class AppController {
 
     private func transcribe(_ clip: Clip, pasteInto target: PasteTarget?) async {
         defer { AudioRecorder.remove(clip.url) }
-        let text: String
+        var text: String
+        let vocabulary = Vocabulary(settings.vocabulary)
         do {
-            let vocabulary = Vocabulary(settings.vocabulary)
             let transcript = try await GroqClient(apiKey: settings.apiKey).transcribe(
                 fileURL: clip.url,
                 language: settings.language,
@@ -271,17 +275,51 @@ final class AppController {
             return
         }
 
+        var cleanupWarning: String?
+        let raw = text
+        if !text.isEmpty, settings.cleanupEnabled {
+            hud.show(.cleaningUp)
+            (text, cleanupWarning) = await cleanUp(text, vocabulary: vocabulary)
+        }
+
         hud.hide()
         guard !text.isEmpty else {
             phase = .idle
             return
         }
         lastTranscript = text
+        lastRawTranscript = raw == text ? nil : raw
         phase = .pasting
         let outcome = await Paster.paste(text, into: target)
         phase = .idle
         if case .notPasted(let message) = outcome {
             fail(message)
+        } else if let cleanupWarning {
+            // The dictation still arrived; say why it wasn't cleaned up rather than fail silently.
+            fail(cleanupWarning)
+        }
+    }
+
+    /// Returns the cleaned-up text, or `text` unchanged plus a warning if cleanup fails or strays
+    /// from it. The dictation itself must never be lost to this optional step.
+    private func cleanUp(_ text: String, vocabulary: Vocabulary) async -> (text: String, warning: String?) {
+        let cleanup = TextCleanup(client: GroqClient(apiKey: settings.apiKey), model: settings.cleanupModel)
+        do {
+            let cleaned = try await cleanup.clean(
+                text, instructions: settings.cleanupInstructions, vocabulary: vocabulary, language: settings.language
+            )
+            guard TextCleanup.isFaithful(original: text, cleaned: cleaned) else {
+                Self.log.notice("cleanup rejected: reply strayed from the transcript")
+                return (text, "AI cleanup changed too much, so the plain transcript was pasted.")
+            }
+            guard !TextCleanup.insertsVocabulary(original: text, cleaned: cleaned, vocabulary: vocabulary) else {
+                Self.log.notice("cleanup rejected: reply added a vocabulary term that wasn't spoken")
+                return (text, "AI cleanup added a word you didn't say, so the plain transcript was pasted.")
+            }
+            return (vocabulary.correct(cleaned), nil)
+        } catch {
+            Self.log.error("cleanup failed: \(error.localizedDescription, privacy: .public)")
+            return (text, "AI cleanup skipped. \(error.localizedDescription)")
         }
     }
 

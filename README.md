@@ -8,9 +8,9 @@ It records while you hold the Fn (🌐) key, or a shortcut of your choice. It se
 the text field you were typing in.
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-16 Swift files, about 1,600 lines including comments.
+17 Swift files, about 2,000 lines including comments.
 
-**Status: 1.0.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
+**Status: 1.1.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
 
 ## How it works
@@ -20,6 +20,7 @@ hold Fn      ──► AVAudioRecorder (16 kHz mono AAC, temp file) + level mete
 release      ──► discard if the level meter heard no voice
              ──► POST /openai/v1/audio/transcriptions  (Groq, whisper-large-v3-turbo)
              ──► drop text Whisper invents on near-silence, fix vocabulary near misses
+             ──► optional: AI cleanup of punctuation and fillers (Groq chat model)
              ──► same app, window and field in focus? clipboard ← text, ⌘V, clipboard restored
 ```
 
@@ -30,6 +31,7 @@ release      ──► discard if the level meter heard no voice
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
+| `TextCleanup.swift` | Optional AI cleanup: prompt, model settings, and a guard that falls back to the raw transcript if the reply strays from it. |
 | `Hallucinations.swift` | Drops stock phrases ("Thanks for watching") and prompt echoes, but only from clips with under 0.8 s of voice. |
 | `Vocabulary.swift` | Your list of names, used as Whisper's prompt and to fix near misses afterwards ("Hrtmade" → "Heartmade"), keeping Polish case endings. |
 | `PasteTarget.swift` | Remembers the app, window and text field that had focus when the take started, read through the Accessibility API. |
@@ -111,7 +113,8 @@ Skryba has no servers, accounts, analytics or telemetry. It talks to one endpoin
 `api.groq.com`.
 
 - **What leaves your Mac:** the audio of each take, plus your vocabulary list (sent as Whisper's
-  prompt). If you put client names in the vocabulary, Groq receives them with every request. Read
+  prompt). With AI cleanup on, the transcript and your cleanup instructions also go to a Groq
+  chat model. If you put client names in the vocabulary, Groq receives them with every request. Read
   [Groq's privacy policy](https://groq.com/privacy-policy/) if that matters for your use.
 - **What stays local:** your settings and vocabulary (in UserDefaults), the API key (in the
   keychain), and the last transcript (in memory only, shown under *Copy last*).
@@ -129,11 +132,38 @@ Skryba has no servers, accounts, analytics or telemetry. It talks to one endpoin
 - The **by Heartmade** links open heartmade.pl with a `utm_source=skryba` tag, and only when you
   click them.
 
+## AI cleanup (optional, off by default)
+
+Whisper transcribes what it hears, including "yyy", false starts and punctuation guesses. Turn on
+**Settings → AI cleanup** to pass each transcript through a Groq chat model: `openai/gpt-oss-120b`
+by default, or `qwen/qwen3.8-27b` (preview). It is told to fix punctuation and misheard words and
+to remove fillers, stutters and self-corrections, without rewording you.
+
+- **It's a second request**, so dictation takes a little longer. The HUD shows *Cleaning up…*
+  while it runs, and request timings are logged (see Troubleshooting).
+- **Instructions are editable** in Settings. The defaults are in Polish when your dictation
+  language is Polish, otherwise in English. Your vocabulary is appended automatically. Add your
+  own typical misrecognitions there (for example *"kloud md" → CLAUDE.md*).
+- **It can't lose your dictation.** A language model may answer a dictated question instead of
+  correcting it, or add text. Skryba pastes the plain transcript instead, with a note in the HUD,
+  in any of these cases: more than half of the words change (fillers don't count), the reply gets
+  longer, it adds a vocabulary term you didn't say, or the request fails.
+- **Names are left alone.** The default instructions tell the model not to "fix" names and
+  foreign words it doesn't know. For names it should spell a particular way, add them to
+  Vocabulary.
+- **Compare with the original:** after a cleaned-up dictation, **Copy without AI cleanup** in the
+  menu gives you the plain transcript. Like *Copy last*, it's kept in memory only.
+
 ## Cost
 
 Groq bills whisper-large-v3-turbo at $0.04 per hour of audio, with a 10-second minimum per request
 (pricing as of September 2026, so check Groq's site). One thousand short dictations come to about
 $0.11.
+
+AI cleanup adds token costs: $0.15/$0.60 per million input/output tokens for GPT-OSS 120B, and
+$0.80/$4.00 for Qwen 3.8 27B. A short dictation with the default prompt is roughly 450 tokens in
+and 200 out, which comes to about $0.20 per 1,000 dictations with GPT-OSS and $0.80 with Qwen.
+These are estimates; your Groq dashboard shows the real numbers.
 
 ## Troubleshooting
 

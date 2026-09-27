@@ -26,6 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.start()
     }
 
+    /// Opening Skryba again (Finder, Spotlight) while it runs shows Settings, the usual menu-bar-app behaviour.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        controller.openSettings()
+        return false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         controller.shutdown()
     }
@@ -54,6 +60,9 @@ struct MenuContent: View {
         if let last = controller.lastTranscript {
             Divider()
             Button("Copy last: \(last.truncated(to: 40))") { Paster.copy(last) }
+            if let raw = controller.lastRawTranscript {
+                Button("Copy without AI cleanup") { Paster.copy(raw) }
+            }
         }
 
         Divider()

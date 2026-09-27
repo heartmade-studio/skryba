@@ -8,7 +8,7 @@ import SwiftUI
 @MainActor
 final class RecordingHUD {
     enum Style: Equatable {
-        case recording, transcribing
+        case recording, transcribing, cleaningUp
         case error(String)
     }
 
@@ -78,6 +78,11 @@ private struct HUDView: View {
                     .controlSize(.small)
                     .tint(.white)
                 Text("Transcribing…")
+            case .cleaningUp:
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.white)
+                Text("Cleaning up…")
             case .error(let message):
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.yellow)

@@ -18,6 +18,15 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Say a vocabulary term ("Heartmade"). It is spelled as in Settings.
 - [ ] Say "Dziękuję za uwagę" deliberately. It is pasted, not filtered.
 
+## AI cleanup
+
+- [ ] Turn on AI cleanup. Dictate with a few "yyy" and a self-correction ("do Ani, nie, do Kasi").
+      The HUD shows *Cleaning up…* and the pasted text is clean, with no rewording.
+- [ ] Dictate a question ("jaka jest stolica Francji"). The question is pasted, not an answer.
+- [ ] The log shows `groq chat openai/gpt-oss-120b` with a timing and no `cleanup failed` line.
+      Repeat with Qwen.
+- [ ] Edit the instructions, then **Reset to default** brings back the default for your language.
+
 ## Safety
 
 - [ ] Start dictating in Notes, switch to another app while it says "Transcribing…". Nothing is

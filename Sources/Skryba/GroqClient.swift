@@ -1,10 +1,11 @@
 import Foundation
 import os
 
-/// Minimal client for Groq's OpenAI-compatible transcription endpoint.
-/// Docs: https://console.groq.com/docs/speech-to-text
+/// Minimal client for Groq's OpenAI-compatible API: speech-to-text, and chat for the optional cleanup.
+/// Docs: https://console.groq.com/docs/speech-to-text, https://console.groq.com/docs/text-chat
 struct GroqClient {
-    static let endpoint = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
+    static let transcriptionEndpoint = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
+    static let chatEndpoint = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
     static let model = "whisper-large-v3-turbo"
 
     let apiKey: String
@@ -32,15 +33,52 @@ struct GroqClient {
         body.append(try Data(contentsOf: fileURL))
         body.append("\r\n--\(boundary)--\r\n")
 
-        var request = URLRequest(url: Self.endpoint)
+        let data = try await send(
+            to: Self.transcriptionEndpoint,
+            contentType: "multipart/form-data; boundary=\(boundary)",
+            body: body,
+            timeout: 30,
+            label: "transcription"
+        )
+        return try Self.decoder.decode(Transcription.self, from: data).speechText
+    }
+
+    /// One system + user exchange with a chat model; returns the reply text.
+    func chat(
+        model: String, system: String, user: String,
+        reasoningEffort: String?, includeReasoning: Bool?, maxTokens: Int
+    ) async throws -> String {
+        let request = ChatRequest(
+            model: model,
+            messages: [.init(role: "system", content: system), .init(role: "user", content: user)],
+            temperature: 0.2,
+            maxCompletionTokens: maxTokens,
+            reasoningEffort: reasoningEffort,
+            includeReasoning: includeReasoning
+        )
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try await send(
+            to: Self.chatEndpoint,
+            contentType: "application/json",
+            body: try encoder.encode(request),
+            timeout: 15,
+            label: "chat \(model)"
+        )
+        let reply = try Self.decoder.decode(ChatResponse.self, from: data)
+        return reply.choices.first?.message.content ?? ""
+    }
+
+    private func send(to url: URL, contentType: String, body: Data, timeout: TimeInterval, label: String) async throws -> Data {
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 30
+        request.timeoutInterval = timeout
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
 
         let started = ContinuousClock.now
         let (data, response) = try await Self.session.upload(for: request, from: body)
-        Self.log.info("groq: \(body.count / 1024) KB, \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
+        Self.log.info("groq \(label, privacy: .public): \(body.count / 1024) KB, \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         guard let http = response as? HTTPURLResponse else {
             throw SkrybaError.api(status: 0, message: "No response from Groq.")
         }
@@ -49,10 +87,35 @@ struct GroqClient {
                 ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw SkrybaError.api(status: http.statusCode, message: message)
         }
+        return data
+    }
 
+    private static var decoder: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(Transcription.self, from: data).speechText
+        return decoder
+    }
+
+    private struct ChatRequest: Encodable {
+        struct Message: Encodable {
+            let role: String
+            let content: String
+        }
+        let model: String
+        let messages: [Message]
+        let temperature: Double
+        let maxCompletionTokens: Int
+        // Optional reasoning controls; omitted from the JSON when nil.
+        let reasoningEffort: String?
+        let includeReasoning: Bool?
+    }
+
+    private struct ChatResponse: Decodable {
+        struct Choice: Decodable {
+            struct Message: Decodable { let content: String? }
+            let message: Message
+        }
+        let choices: [Choice]
     }
 
     private struct Transcription: Decodable {
