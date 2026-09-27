@@ -41,7 +41,7 @@ struct MenuContent: View {
     let controller: AppController
 
     var body: some View {
-        if controller.phase == .recording {
+        if controller.phase.isRecording {
             Button("Cancel recording") { controller.cancelRecording() }
         } else {
             Text("Hold \(controller.triggerName) to dictate")

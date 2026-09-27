@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Skryba
 
@@ -97,5 +98,46 @@ struct TextCleanupInsertionTests {
         #expect(TextCleanup.insertedWords(["a", "b", "c"], ["a", "x", "b", "c"]) == ["x"])
         #expect(TextCleanup.insertedWords(["a", "b", "c"], ["a", "y", "c"]).isEmpty)
         #expect(TextCleanup.insertedWords([], ["a"]) == ["a"])
+    }
+}
+
+struct TextCleanupRejectionTests {
+    private func rejection(_ original: String, _ cleaned: String, vocabulary: String = "",
+                           instructions: String = "") -> TextCleanup.Rejection? {
+        TextCleanup.rejection(
+            original: original, cleaned: cleaned, vocabulary: Vocabulary(vocabulary),
+            instructions: instructions, language: "pl"
+        )
+    }
+
+    @Test func namesEachReason() {
+        #expect(rejection("jaka jest stolica Francji", "Stolicą Francji jest Paryż.") == .strayed)
+        #expect(rejection("to jest pierwszy tekst o nowym pałacu", "To jest pierwszy tekst Heartmade o nowym pałacu.",
+                          vocabulary: "Heartmade") == .addedVocabulary)
+        #expect(rejection("Przelej 100 złotych.", "Przelej 900 złotych.") == .changed(.number))
+        #expect(rejection("yyy przelej 100 złotych", "Przelej 100 złotych.") == nil)
+    }
+
+    @Test func namesFromInstructionsAreAllowed() {
+        let instructions = "Zapisuj nazwę pliku jako CLAUDE.md."
+        #expect(rejection("otwórz plik kloud", "Otwórz plik CLAUDE.", instructions: instructions) == nil)
+        #expect(rejection("otwórz plik kloud", "Otwórz plik CLAUDE.") == .changed(.name))
+    }
+}
+
+struct GroqReplyTests {
+    private func reply(_ json: String) throws -> String {
+        try GroqClient.replyText(from: Data(json.utf8))
+    }
+
+    @Test func returnsACompleteReply() throws {
+        #expect(try reply(#"{"choices":[{"message":{"content":"Tak."},"finish_reason":"stop"}]}"#) == "Tak.")
+        #expect(try reply(#"{"choices":[{"message":{"content":"Tak."}}]}"#) == "Tak.")
+    }
+
+    @Test func rejectsACutOffReply() {
+        #expect(throws: SkrybaError.self) {
+            try reply(#"{"choices":[{"message":{"content":"Przygotuj dokument i"},"finish_reason":"length"}]}"#)
+        }
     }
 }

@@ -89,6 +89,54 @@ struct TextCleanup {
 
     // MARK: Guard
 
+    /// Why a cleaned-up reply can't replace the transcript.
+    enum Rejection: Equatable {
+        /// Too many words changed: an answer, a summary or a rewrite.
+        case strayed
+        /// A vocabulary term appeared where nothing was said.
+        case addedVocabulary
+        /// A number, negation or name changed (`ProtectedWords`).
+        case changed(ProtectedWords.Violation)
+
+        /// For the log. Names the kind of change only, never the dictated words.
+        var logDescription: String {
+            switch self {
+            case .strayed: "reply strayed from the transcript"
+            case .addedVocabulary: "reply added a vocabulary term that wasn't spoken"
+            case .changed(let violation): "changed a protected \(violation.rawValue)"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .strayed: "AI cleanup changed too much, so the plain transcript was pasted."
+            case .addedVocabulary: "AI cleanup added a word you didn't say, so the plain transcript was pasted."
+            case .changed(let violation): "AI cleanup changed a \(violation.rawValue), so the plain transcript was pasted."
+            }
+        }
+    }
+
+    /// Every check in one verdict: the first reason `cleaned` may not be pasted, or nil if it may.
+    /// Pass the final text, after every transformation, so nothing changes after it was judged.
+    static func rejection(
+        original: String, cleaned: String, vocabulary: Vocabulary, instructions: String, language: String
+    ) -> Rejection? {
+        guard isFaithful(original: original, cleaned: cleaned, language: language) else { return .strayed }
+        guard !insertsVocabulary(original: original, cleaned: cleaned, vocabulary: vocabulary, language: language) else {
+            return .addedVocabulary
+        }
+        // Names from the vocabulary or the user's own instructions ("kloud md" → CLAUDE.md) are expected.
+        let termWords = vocabulary.terms.flatMap(ProtectedWords.tokens)
+        let instructionNames = ProtectedWords.tokens(instructions).filter(\.isCapitalised)
+        let allowedNames = Set((termWords + instructionNames).map(\.key))
+        if let violation = ProtectedWords.violation(
+            original: original, cleaned: cleaned, language: language, allowedNames: allowedNames
+        ) {
+            return .changed(violation)
+        }
+        return nil
+    }
+
     /// Share of words that may change. Removing fillers and fixing misheard words stays well below
     /// it; an answer, summary or translation goes far above it.
     static let maximumWordChange = 0.5

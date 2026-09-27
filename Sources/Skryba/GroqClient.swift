@@ -65,8 +65,17 @@ struct GroqClient {
             timeout: 15,
             label: "chat \(model)"
         )
-        let reply = try Self.decoder.decode(ChatResponse.self, from: data)
-        return reply.choices.first?.message.content ?? ""
+        return try Self.replyText(from: data)
+    }
+
+    /// The reply of a chat completion. A reply that didn't end on its own ("length": it hit the token
+    /// limit) is cut off, so it throws rather than returning half a text.
+    static func replyText(from data: Data) throws -> String {
+        guard let choice = try decoder.decode(ChatResponse.self, from: data).choices.first else { return "" }
+        if let reason = choice.finishReason, reason != "stop" {
+            throw SkrybaError.incompleteReply(reason: reason)
+        }
+        return choice.message.content ?? ""
     }
 
     private func send(to url: URL, contentType: String, body: Data, timeout: TimeInterval, label: String) async throws -> Data {
@@ -114,6 +123,7 @@ struct GroqClient {
         struct Choice: Decodable {
             struct Message: Decodable { let content: String? }
             let message: Message
+            let finishReason: String?
         }
         let choices: [Choice]
     }
@@ -154,6 +164,7 @@ struct GroqClient {
 enum SkrybaError: LocalizedError {
     case recordingFailed
     case api(status: Int, message: String)
+    case incompleteReply(reason: String)
 
     var errorDescription: String? {
         switch self {
@@ -163,6 +174,8 @@ enum SkrybaError: LocalizedError {
             "Groq rejected the API key (\(message)). Check it in Settings."
         case .api(_, let message):
             "Groq: \(message)"
+        case .incompleteReply(let reason):
+            "The reply was incomplete (\(reason))."
         }
     }
 }

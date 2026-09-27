@@ -16,11 +16,17 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Tap Fn quickly (under 0.3 s). Nothing happens: no HUD, no sound.
 - [ ] Fn+⌫ deletes forward and Fn+↑ pages up, with no recording, HUD or sound.
 
-## Hands-free (1.2)
+## Hands-free (1.2.2)
 
-- [ ] Tap Fn three times quickly. The HUD says *Hands-free · tap Fn to stop*, and recording goes on
-      with no key held. Speak, tap Fn once: the text is transcribed and pasted.
-- [ ] Tap Fn twice, then hold it to talk. That's normal push-to-talk, not hands-free.
+- [ ] Tap Fn three times quickly. When you let go of the third tap, the HUD says *Hands-free · tap
+      Fn to stop*, and recording goes on with no key held. Speak, tap Fn once: the text is
+      transcribed and pasted.
+- [ ] Tap Fn twice, then hold it to talk. That's normal push-to-talk, not hands-free: releasing
+      Fn transcribes.
+- [ ] Tap Fn twice, press it a third time and, still holding it, press ↑. Then tap Fn once. The
+      mic dot disappears at once (a stale gesture must not keep the mic on).
+- [ ] Enter hands-free, **Cancel recording** in the menu, then tap Fn twice quickly. Nothing starts;
+      it takes three taps again.
 - [ ] Three slow taps (about a second apart) don't start hands-free.
 - [ ] In hands-free mode, type on the keyboard. Recording continues, and only an Fn tap stops it.
 - [ ] In hands-free mode, **Cancel recording** in the menu discards the take.
@@ -37,6 +43,8 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Dictate "nie wysyłaj tego do klienta" and "przelej sto dwadzieścia złotych". The negation
       and the amount survive cleanup. If the model changed them, the HUD says "AI cleanup changed
       a negation/number" and the plain transcript is pasted.
+- [ ] Dictate "przelej sto złotych Ani i dwieście złotych Kasi". Amounts and names stay where they
+      were said.
 - [ ] The log shows `groq chat openai/gpt-oss-120b` with a timing and no `cleanup failed` line.
       Repeat with Qwen.
 - [ ] Edit the instructions, then **Reset to default** brings back the default for your language.

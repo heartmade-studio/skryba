@@ -8,9 +8,9 @@ It records while you hold the Fn (🌐) key, or a shortcut of your choice. It se
 the text field you were typing in.
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-19 Swift files, about 2,300 lines including comments.
+19 Swift files, about 2,500 lines including comments.
 
-**Status: 1.1.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
+**Status: 1.2.2.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
 
 ## How it works
@@ -28,12 +28,12 @@ release      ──► discard if the level meter heard no voice
 |---|---|
 | `AppController.swift` | The state machine for one take at a time: idle → recording → transcribing → pasting → idle. It also enforces the 5-minute cap and polls the key state in case a key-up is lost. |
 | `FnKey.swift` | Hold-Fn trigger via NSEvent modifier monitors. Pressing any other key while Fn is down (Fn+⌫, Fn+↑) cancels the take. |
-| `TripleTap.swift` | Recognises three quick Fn taps, which switch to hands-free mode. |
+| `FnGesture.swift` | Everything a Fn press means, in one place: hold to talk, a triple tap for hands-free, a tap to stop. A cancelled take resets it, so no half-finished gesture outlives it. |
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
 | `TextCleanup.swift` | Optional AI cleanup: prompt, model settings, and a guard that falls back to the raw transcript if the reply strays from it. |
-| `ProtectedWords.swift` | The stricter part of that guard: numbers, negations and names may be dropped by a self-correction but never added or changed. |
+| `ProtectedWords.swift` | The stricter part of that guard: numbers (also spelled out) and names must keep their place, may be dropped only by a self-correction, and are never added; negations must stay as many. A heuristic that errs toward the plain transcript. |
 | `Hallucinations.swift` | Drops stock phrases ("Thanks for watching") and prompt echoes, but only from clips with under 0.8 s of voice. |
 | `Vocabulary.swift` | Your list of names, used as Whisper's prompt and to fix near misses afterwards ("Hrtmade" → "Heartmade"), keeping Polish case endings. |
 | `PasteTarget.swift` | Remembers the app, window and text field that had focus when the take started, read through the Accessibility API. |
@@ -92,7 +92,8 @@ SKRYBA_SIGN_IDENTITY="Your Identity Name" scripts/build.sh
 - **Hold Fn**, speak, and **release**. Taps shorter than 0.3 s and takes with no voice are ignored.
   One take can last up to 5 minutes.
 - **Hands-free:** tap Fn three times quickly (within a second) and keep talking without holding
-  anything. The HUD says *Hands-free · tap Fn to stop*. Tap Fn once to stop and transcribe, or use
+  anything. Hands-free starts when you let go of the third tap, so two taps and then a hold are
+  ordinary push-to-talk. The HUD says *Hands-free · tap Fn to stop*. Tap Fn once to stop and transcribe, or use
   **Cancel recording** in the menu to discard. The 5-minute cap still applies. Hands-free works with
   the Fn trigger only.
 - If macOS Dictation is on with its shortcut set to *Press 🌐 twice* (System Settings → Keyboard →

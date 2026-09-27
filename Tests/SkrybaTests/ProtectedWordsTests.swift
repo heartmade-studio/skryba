@@ -71,7 +71,47 @@ struct ProtectedWordsTests {
         #expect(check("pracuję w hartmejd", "Pracuję w Heartmade.") == .name)
     }
 
-    @Test func sentenceStartsAreNotNames() {
+    @Test func capitalisedSentenceStartsPass() {
         #expect(check("dobrze. jutro wyślę", "Dobrze. Jutro wyślę.") == nil)
+        #expect(check("zolty samochod", "Żółty samochód.") == nil)
+    }
+
+    // The second audit: meaning changes that kept every protected word, just not in its place.
+
+    @Test func rejectsSwappedAmounts() {
+        #expect(check("Przelej 100 zł Ani i 900 zł Kasi.", "Przelej 900 zł Ani i 100 zł Kasi.") == .number)
+    }
+
+    @Test func rejectsSwappedNames() {
+        #expect(check("Wyślij dokument Ani, a kopię Kasi.", "Wyślij dokument Kasi, a kopię Ani.") == .name)
+    }
+
+    @Test func rejectsANameChangedAtTheStartOfASentence() {
+        #expect(check("Ania wysłała dokument do klienta.", "Kasia wysłała dokument do klienta.") == .name)
+    }
+
+    @Test func rejectsAChangedNumberWord() {
+        #expect(check("Przelej sto złotych na konto firmy.", "Przelej dziewięćset złotych na konto firmy.") == .number)
+        #expect(check("Send two copies.", "Send three copies.", language: "en") == .number)
+    }
+
+    @Test func rejectsDroppedNamesAndNumbersWithoutACorrection() {
+        #expect(check("Wyślij ofertę do Ani i Kasi jutro rano.", "Wyślij ofertę do Ani jutro rano.") == .name)
+        #expect(check("Przelej 100 zł i 200 zł.", "Przelej 100 zł.") == .number)
+    }
+
+    @Test func acceptsOtherSelfCorrectionsAndRepeats() {
+        #expect(check("Przelej 100 znaczy 200 zł.", "Przelej 200 zł.") == nil)
+        #expect(check("przelej sto, nie, dwieście złotych", "Przelej dwieście złotych.") == nil)
+        #expect(check("wyślij to do Ani Ani jutro", "Wyślij to do Ani jutro.") == nil)
+    }
+
+    @Test func aNameCleanupLowercasedIsNotDropped() {
+        #expect(check("wyślij to do Pana Kowalskiego", "Wyślij to do pana Kowalskiego.") == nil)
+    }
+
+    @Test func aFixedWordAtASentenceStartFallsBack() {
+        // Indistinguishable from a changed name, so the plain transcript wins (the documented trade-off).
+        #expect(check("morze to zrobię jutro", "Może to zrobię jutro.") == .name)
     }
 }

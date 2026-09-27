@@ -10,8 +10,21 @@ import os
 @MainActor @Observable
 final class AppController {
     enum Phase: Equatable {
-        case idle, recording, transcribing, pasting
+        case idle, transcribing, pasting
+        case recording(RecordingMode)
         case error(String)
+
+        var isRecording: Bool {
+            if case .recording = self { return true }
+            return false
+        }
+    }
+
+    enum RecordingMode: Equatable {
+        /// Recording while the trigger is held.
+        case pushToTalk
+        /// Recording continues without holding Fn, until Fn is tapped again (entered by a triple tap).
+        case handsFree
     }
 
     private(set) var phase: Phase = .idle
@@ -22,8 +35,6 @@ final class AppController {
     private(set) var microphoneGranted = false
     private(set) var accessibilityGranted = false
     private(set) var fnKeyFree = FnKey.isFreeForApps
-    /// Recording continues without holding Fn, until Fn is tapped again (entered by a triple tap).
-    private(set) var isHandsFree = false
 
     let settings = Settings()
 
@@ -37,9 +48,7 @@ final class AppController {
     /// Where the take started; the only place its text may be pasted.
     @ObservationIgnored private var pasteTarget: PasteTarget?
     @ObservationIgnored private var feedbackShown = false
-    @ObservationIgnored private var tripleTap = TripleTap()
-    /// The release that follows the triple tap or the tap ending hands-free mode must not stop anything.
-    @ObservationIgnored private var ignoreNextFnRelease = false
+    @ObservationIgnored private var fnGesture = FnGesture()
 
     /// Clips shorter than this are treated as accidental taps and never sent.
     private static let minimumClipDuration: TimeInterval = 0.3
@@ -63,7 +72,7 @@ final class AppController {
     }
 
     private var isBusy: Bool {
-        phase == .recording || phase == .transcribing || phase == .pasting
+        phase.isRecording || phase == .transcribing || phase == .pasting
     }
 
     func start() {
@@ -72,10 +81,7 @@ final class AppController {
         hotKey.onRelease = { [weak self] in self?.stopRecording() }
         fnKey.onPress = { [weak self] in self?.fnPressed() }
         fnKey.onRelease = { [weak self] in self?.fnReleased() }
-        fnKey.onCancel = { [weak self] in
-            self?.tripleTap.reset()
-            self?.cancelRecording()
-        }
+        fnKey.onCancel = { [weak self] in self?.cancelRecording() }
         applyTrigger()
         refreshPermissions()
         watchPermissions()
@@ -158,63 +164,65 @@ final class AppController {
     // MARK: Fn: hold to talk, triple-tap for hands-free
 
     private func fnPressed() {
-        if isHandsFree {
-            // This tap ends hands-free mode.
-            ignoreNextFnRelease = true
-            tripleTap.reset()
-            stopRecording()
-            return
-        }
-        // Every press starts recording at once, so push-to-talk keeps its first syllable. The two
-        // taps before the third are too short to be sent and are discarded as accidental taps.
-        let completesTripleTap = tripleTap.press(at: ProcessInfo.processInfo.systemUptime)
-        startRecording()
-        if completesTripleTap, phase == .recording {
-            isHandsFree = true
-            ignoreNextFnRelease = true
-        }
+        let handsFree = phase == .recording(.handsFree)
+        perform(fnGesture.press(at: ProcessInfo.processInfo.systemUptime, handsFree: handsFree))
     }
 
     private func fnReleased() {
-        tripleTap.release(at: ProcessInfo.processInfo.systemUptime)
-        if ignoreNextFnRelease {
-            ignoreNextFnRelease = false
-            return
+        perform(fnGesture.release(at: ProcessInfo.processInfo.systemUptime))
+    }
+
+    private func perform(_ action: FnGesture.Action) {
+        switch action {
+        case .start:
+            // A press that couldn't record (a take is still transcribing) is no tap of a gesture either.
+            if !startRecording() { fnGesture.reset() }
+        case .stop:
+            stopRecording()
+        case .enterHandsFree:
+            // The third tap's own take keeps running; it just no longer needs the key.
+            guard phase == .recording(.pushToTalk) else { return }
+            phase = .recording(.handsFree)
+            if feedbackShown { hud.show(.handsFree) }
+        case .none:
+            break
         }
-        stopRecording()
     }
 
     // MARK: Dictation loop
 
-    private func startRecording() {
+    /// Returns whether a take started. It doesn't while another take is unfinished or on an error.
+    @discardableResult
+    private func startRecording() -> Bool {
         // Carbon may repeat "pressed" while the key is held; an unfinished take also blocks a new one.
-        guard !isBusy else { return }
+        guard !isBusy else { return false }
         guard !settings.apiKey.isEmpty else {
             fail("Add your Groq API key in Settings.")
             openSettings()
-            return
+            return false
         }
         do {
             try recorder.start()
         } catch {
             fail("Microphone unavailable: \(error.localizedDescription)")
-            return
+            return false
         }
         let id = UUID()
         take = id
         pasteTarget = PasteTarget.current()
-        phase = .recording
+        phase = .recording(.pushToTalk)
         feedbackShown = false
         showFeedback(after: Self.feedbackDelay, for: id)
         watchTrigger(for: id)
+        return true
     }
 
     private func showFeedback(after delay: TimeInterval, for id: UUID) {
         Task {
             try? await Task.sleep(for: .seconds(delay))
-            guard take == id, phase == .recording else { return }
+            guard take == id, phase.isRecording else { return }
             feedbackShown = true
-            hud.show(isHandsFree ? .handsFree : .recording)
+            hud.show(phase == .recording(.handsFree) ? .handsFree : .recording)
             playSound("Tink")
         }
     }
@@ -229,13 +237,13 @@ final class AppController {
             var misses = 0
             while true {
                 try? await Task.sleep(for: .milliseconds(100))
-                guard let self, self.take == id, self.phase == .recording else { return }
+                guard let self, self.take == id, self.phase.isRecording else { return }
                 if ContinuousClock.now - started > .seconds(Self.maximumRecordingDuration) {
                     self.stopRecording()
                     return
                 }
                 // In hands-free mode the key is up on purpose; only the length cap applies.
-                if self.isHandsFree { continue }
+                if self.phase == .recording(.handsFree) { continue }
                 if self.isTriggerPhysicallyHeld {
                     sawHeld = true
                     misses = 0
@@ -261,9 +269,8 @@ final class AppController {
     }
 
     private func stopRecording() {
-        guard phase == .recording, let clip = recorder.stop() else { return }
+        guard phase.isRecording, let clip = recorder.stop() else { return }
         take = UUID() // retire this take's timers
-        isHandsFree = false
         if feedbackShown { playSound("Pop") }
 
         guard clip.duration >= Self.minimumClipDuration else {
@@ -287,9 +294,11 @@ final class AppController {
     /// Ends a take without sending anything: another key joined the trigger (it was a shortcut, not
     /// dictation), the trigger changed, the user chose Cancel in the menu, or the app is quitting.
     func cancelRecording() {
-        guard phase == .recording else { return }
+        // The gesture ends with the take, and even without one: the tap that ended hands-free may be
+        // cancelled while Fn is still down. Its release will never be reported, so nothing may wait for it.
+        fnGesture.reset()
+        guard phase.isRecording else { return }
         take = UUID()
-        isHandsFree = false
         if let clip = recorder.stop() {
             AudioRecorder.remove(clip.url)
         }
@@ -344,35 +353,21 @@ final class AppController {
     /// Returns the cleaned-up text, or `text` unchanged plus a warning if cleanup fails or strays
     /// from it. The dictation itself must never be lost to this optional step.
     private func cleanUp(_ text: String, vocabulary: Vocabulary) async -> (text: String, warning: String?) {
+        // One snapshot of the settings, so a change in Settings during the request can't mix the rules.
+        let language = settings.language, instructions = settings.cleanupInstructions
         let cleanup = TextCleanup(client: GroqClient(apiKey: settings.apiKey), model: settings.cleanupModel)
         do {
-            let cleaned = try await cleanup.clean(
-                text, instructions: settings.cleanupInstructions, vocabulary: vocabulary, language: settings.language
-            )
-            let language = settings.language
-            guard TextCleanup.isFaithful(original: text, cleaned: cleaned, language: language) else {
-                Self.log.notice("cleanup rejected: reply strayed from the transcript")
-                return (text, "AI cleanup changed too much, so the plain transcript was pasted.")
-            }
-            guard !TextCleanup.insertsVocabulary(
-                original: text, cleaned: cleaned, vocabulary: vocabulary, language: language
-            ) else {
-                Self.log.notice("cleanup rejected: reply added a vocabulary term that wasn't spoken")
-                return (text, "AI cleanup added a word you didn't say, so the plain transcript was pasted.")
-            }
-            // Names from the vocabulary or the user's own instructions ("kloud md" → CLAUDE.md) are expected.
-            let allowedNames = Set(
-                (vocabulary.terms + [settings.cleanupInstructions])
-                    .flatMap { ProtectedWords.tokens($0).map { $0.text.lowercased() } }
-            )
-            if let violation = ProtectedWords.violation(
-                original: text, cleaned: cleaned, language: language, allowedNames: allowedNames
+            let reply = try await cleanup.clean(text, instructions: instructions, vocabulary: vocabulary, language: language)
+            // Judge exactly the text that would be pasted.
+            let cleaned = vocabulary.correct(reply)
+            if let rejection = TextCleanup.rejection(
+                original: text, cleaned: cleaned, vocabulary: vocabulary, instructions: instructions, language: language
             ) {
-                // Log the kind of change only, never the dictated words.
-                Self.log.notice("cleanup rejected: changed a protected \(violation.rawValue, privacy: .public)")
-                return (text, "AI cleanup changed a \(violation.rawValue), so the plain transcript was pasted.")
+                // Log the kind of rejection only, never the dictated words.
+                Self.log.notice("cleanup rejected: \(rejection.logDescription, privacy: .public)")
+                return (text, rejection.message)
             }
-            return (vocabulary.correct(cleaned), nil)
+            return (cleaned, nil)
         } catch {
             Self.log.error("cleanup failed: \(error.localizedDescription, privacy: .public)")
             return (text, "AI cleanup skipped. \(error.localizedDescription)")

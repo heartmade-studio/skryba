@@ -23,13 +23,15 @@ showcase, so the code must stay small, readable, and well commented.
   the main thread (`MainActor.assumeIsolated`).
 - The HUD must stay a non-activating panel. Taking focus would break pasting.
 - One take at a time (`AppController.Phase`). Timers and tasks must check the take ID before acting.
-- Hands-free (`isHandsFree`, entered by `TripleTap`) must end on every exit from recording: stop,
-  cancel, trigger change, quit. The key-state watchdog is off in hands-free; only the length cap applies.
+- Hands-free is a recording mode (`Phase.recording(.handsFree)`, entered by `FnGesture`), so it ends
+  with every exit from recording. `FnGesture` owns all Fn gesture state; every cancel path
+  (`cancelRecording`) must reset it, because FnKey reports no release for a cancelled press. The
+  key-state watchdog is off in hands-free; only the length cap applies.
 - Paste only into the `PasteTarget` (app, window, field) captured at the start of the take; otherwise fall back
   to the clipboard. Never overwrite a clipboard the user changed meanwhile (`Paster.decide`).
 - Recordings live only in `AudioRecorder.directory`, and every path out of a take deletes its file.
 - AI cleanup is optional and must never lose a dictation: on any error or an unfaithful reply
-  (`TextCleanup.isFaithful`, `ProtectedWords.violation`), paste the plain transcript. Never log
+  (`TextCleanup.rejection`, run on the final text), paste the plain transcript. Never log
   dictated text; log only the kind of rejection.
 - Do not sandbox the app. The App Sandbox blocks the synthetic ⌘V. Distribution is source-only
   (no notarization, no Apple Developer Program).
