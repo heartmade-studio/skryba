@@ -8,7 +8,7 @@ It records while you hold the Fn (🌐) key, or a shortcut of your choice. It se
 the text field you were typing in.
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-18 Swift files, about 2,100 lines including comments.
+19 Swift files, about 2,300 lines including comments.
 
 **Status: 1.1.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
@@ -33,6 +33,7 @@ release      ──► discard if the level meter heard no voice
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
 | `TextCleanup.swift` | Optional AI cleanup: prompt, model settings, and a guard that falls back to the raw transcript if the reply strays from it. |
+| `ProtectedWords.swift` | The stricter part of that guard: numbers, negations and names may be dropped by a self-correction but never added or changed. |
 | `Hallucinations.swift` | Drops stock phrases ("Thanks for watching") and prompt echoes, but only from clips with under 0.8 s of voice. |
 | `Vocabulary.swift` | Your list of names, used as Whisper's prompt and to fix near misses afterwards ("Hrtmade" → "Heartmade"), keeping Polish case endings. |
 | `PasteTarget.swift` | Remembers the app, window and text field that had focus when the take started, read through the Accessibility API. |
@@ -156,6 +157,13 @@ to remove fillers, stutters and self-corrections, without rewording you.
   correcting it, or add text. Skryba pastes the plain transcript instead, with a note in the HUD,
   in any of these cases: more than half of the words change (fillers don't count), the reply gets
   longer, it adds a vocabulary term you didn't say, or the request fails.
+- **Numbers, negations and names are protected.** One changed word can flip a sentence's meaning
+  ("Nie wysyłaj" → "Wysyłaj", "100 zł" → "900 zł", "do Ani" → "do Kasi"), and a word count can't
+  see that. The model may drop these words in a self-correction ("do Ani, nie, do Kasi"), but it
+  may not add or change them, including a number's sign. A correction marker counts only when it
+  is set off by commas. Otherwise it can't be told apart from a real "nie", and the plain transcript
+  is pasted. Names from your vocabulary and cleanup instructions may be added. In German, where
+  every noun is capitalised, this check is strict and will reject more cleanups.
 - **Names are left alone.** The default instructions tell the model not to "fix" names and
   foreign words it doesn't know. For names it should spell a particular way, add them to
   Vocabulary.

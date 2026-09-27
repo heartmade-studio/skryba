@@ -94,8 +94,10 @@ struct TextCleanup {
     static let maximumWordChange = 0.5
 
     /// True if `cleaned` is still recognisably the same text: similar words, and not longer.
-    static func isFaithful(original: String, cleaned: String) -> Bool {
+    /// The words that carry meaning get a stricter check of their own: `ProtectedWords`.
+    static func isFaithful(original: String, cleaned: String, language: String) -> Bool {
         // Fillers are meant to go, so they don't count as changes.
+        let fillers = fillers(for: language)
         let before = words(original).filter { !fillers.contains($0) }, after = words(cleaned)
         guard !after.isEmpty, !before.isEmpty else { return false }
         // Cleanup removes words; it may split a few wrongly joined ones, but never adds content.
@@ -107,9 +109,10 @@ struct TextCleanup {
     /// True if the reply contains a vocabulary word that was *added*, not substituted for a spoken
     /// word. Turning "hartmejd" into "Heartmade" is the point of the vocabulary; inserting "Heartmade"
     /// where nothing was said is the model making things up.
-    static func insertsVocabulary(original: String, cleaned: String, vocabulary: Vocabulary) -> Bool {
+    static func insertsVocabulary(original: String, cleaned: String, vocabulary: Vocabulary, language: String) -> Bool {
         let termWords = Set(vocabulary.terms.flatMap(words))
         guard !termWords.isEmpty else { return false }
+        let fillers = fillers(for: language)
         let before = words(original).filter { !fillers.contains($0) }
         return insertedWords(before, words(cleaned)).contains(where: termWords.contains)
     }
@@ -143,10 +146,17 @@ struct TextCleanup {
         return inserted.reversed()
     }
 
-    private static let fillers: Set<String> = [
+    /// Words whose removal doesn't count as a change. Hesitation sounds are fillers in any language;
+    /// Polish discourse words ("no", "wiesz") are fillers only in Polish, because English "no" is a
+    /// negation. Words that are also ordinary words ("like") are left out.
+    static func fillers(for language: String) -> Set<String> {
+        language == "pl" ? hesitations.union(polishFillers) : hesitations
+    }
+
+    private static let hesitations: Set<String> = [
         "yyy", "yy", "eee", "ee", "eh", "em", "ehm", "hmm", "hm", "mhm", "um", "uh", "uhm", "er", "erm",
-        "no", "tego", "jakby", "wiesz", "znaczy", "like",
     ]
+    private static let polishFillers: Set<String> = ["no", "tego", "jakby", "wiesz", "znaczy"]
 
     private static func words(_ text: String) -> [String] {
         text.lowercased()

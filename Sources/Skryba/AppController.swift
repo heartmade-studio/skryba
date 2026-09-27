@@ -349,13 +349,28 @@ final class AppController {
             let cleaned = try await cleanup.clean(
                 text, instructions: settings.cleanupInstructions, vocabulary: vocabulary, language: settings.language
             )
-            guard TextCleanup.isFaithful(original: text, cleaned: cleaned) else {
+            let language = settings.language
+            guard TextCleanup.isFaithful(original: text, cleaned: cleaned, language: language) else {
                 Self.log.notice("cleanup rejected: reply strayed from the transcript")
                 return (text, "AI cleanup changed too much, so the plain transcript was pasted.")
             }
-            guard !TextCleanup.insertsVocabulary(original: text, cleaned: cleaned, vocabulary: vocabulary) else {
+            guard !TextCleanup.insertsVocabulary(
+                original: text, cleaned: cleaned, vocabulary: vocabulary, language: language
+            ) else {
                 Self.log.notice("cleanup rejected: reply added a vocabulary term that wasn't spoken")
                 return (text, "AI cleanup added a word you didn't say, so the plain transcript was pasted.")
+            }
+            // Names from the vocabulary or the user's own instructions ("kloud md" → CLAUDE.md) are expected.
+            let allowedNames = Set(
+                (vocabulary.terms + [settings.cleanupInstructions])
+                    .flatMap { ProtectedWords.tokens($0).map { $0.text.lowercased() } }
+            )
+            if let violation = ProtectedWords.violation(
+                original: text, cleaned: cleaned, language: language, allowedNames: allowedNames
+            ) {
+                // Log the kind of change only, never the dictated words.
+                Self.log.notice("cleanup rejected: changed a protected \(violation.rawValue, privacy: .public)")
+                return (text, "AI cleanup changed a \(violation.rawValue), so the plain transcript was pasted.")
             }
             return (vocabulary.correct(cleaned), nil)
         } catch {
