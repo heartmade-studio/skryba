@@ -259,7 +259,16 @@ lipo -archs build/Skryba.app/Contents/MacOS/Skryba   # expect: x86_64 arm64
 codesign --force --sign "Apple Development" build/Skryba.app
 rm -rf build/dmg && mkdir build/dmg && cp -R build/Skryba.app build/dmg/
 ln -s /Applications build/dmg/Applications
-hdiutil create -volname "Skryba" -srcfolder build/dmg -format UDZO -ov build/Skryba.dmg
+cp Resources/AppIcon.icns build/dmg/.VolumeIcon.icns
+# The volume's custom-icon flag only survives if set on the mounted image, so go through a
+# writable copy first.
+hdiutil create -volname "Skryba" -srcfolder build/dmg -format UDRW -ov build/Skryba-rw.dmg
+mkdir -p build/mnt && hdiutil attach build/Skryba-rw.dmg -nobrowse -mountpoint build/mnt
+SetFile -a C build/mnt
+rm -rf build/mnt/.fseventsd
+hdiutil detach build/mnt
+hdiutil convert build/Skryba-rw.dmg -format UDZO -ov -o build/Skryba.dmg
+rm build/Skryba-rw.dmg
 ```
 
 Found a security issue? See [SECURITY.md](SECURITY.md).
