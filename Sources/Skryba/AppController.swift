@@ -22,6 +22,8 @@ final class AppController {
     private(set) var microphoneGranted = false
     private(set) var accessibilityGranted = false
     private(set) var fnKeyFree = FnKey.isFreeForApps
+    /// Recording continues without holding Fn, until Fn is tapped again (entered by a triple tap).
+    private(set) var isHandsFree = false
 
     let settings = Settings()
 
@@ -35,6 +37,9 @@ final class AppController {
     /// Where the take started; the only place its text may be pasted.
     @ObservationIgnored private var pasteTarget: PasteTarget?
     @ObservationIgnored private var feedbackShown = false
+    @ObservationIgnored private var tripleTap = TripleTap()
+    /// The release that follows the triple tap or the tap ending hands-free mode must not stop anything.
+    @ObservationIgnored private var ignoreNextFnRelease = false
 
     /// Clips shorter than this are treated as accidental taps and never sent.
     private static let minimumClipDuration: TimeInterval = 0.3
@@ -65,9 +70,12 @@ final class AppController {
         AudioRecorder.removeLeftovers()
         hotKey.onPress = { [weak self] in self?.startRecording() }
         hotKey.onRelease = { [weak self] in self?.stopRecording() }
-        fnKey.onPress = { [weak self] in self?.startRecording() }
-        fnKey.onRelease = { [weak self] in self?.stopRecording() }
-        fnKey.onCancel = { [weak self] in self?.cancelRecording() }
+        fnKey.onPress = { [weak self] in self?.fnPressed() }
+        fnKey.onRelease = { [weak self] in self?.fnReleased() }
+        fnKey.onCancel = { [weak self] in
+            self?.tripleTap.reset()
+            self?.cancelRecording()
+        }
         applyTrigger()
         refreshPermissions()
         watchPermissions()
@@ -147,6 +155,35 @@ final class AppController {
         }
     }
 
+    // MARK: Fn: hold to talk, triple-tap for hands-free
+
+    private func fnPressed() {
+        if isHandsFree {
+            // This tap ends hands-free mode.
+            ignoreNextFnRelease = true
+            tripleTap.reset()
+            stopRecording()
+            return
+        }
+        // Every press starts recording at once, so push-to-talk keeps its first syllable. The two
+        // taps before the third are too short to be sent and are discarded as accidental taps.
+        let completesTripleTap = tripleTap.press(at: ProcessInfo.processInfo.systemUptime)
+        startRecording()
+        if completesTripleTap, phase == .recording {
+            isHandsFree = true
+            ignoreNextFnRelease = true
+        }
+    }
+
+    private func fnReleased() {
+        tripleTap.release(at: ProcessInfo.processInfo.systemUptime)
+        if ignoreNextFnRelease {
+            ignoreNextFnRelease = false
+            return
+        }
+        stopRecording()
+    }
+
     // MARK: Dictation loop
 
     private func startRecording() {
@@ -177,7 +214,7 @@ final class AppController {
             try? await Task.sleep(for: .seconds(delay))
             guard take == id, phase == .recording else { return }
             feedbackShown = true
-            hud.show(.recording)
+            hud.show(isHandsFree ? .handsFree : .recording)
             playSound("Tink")
         }
     }
@@ -197,6 +234,8 @@ final class AppController {
                     self.stopRecording()
                     return
                 }
+                // In hands-free mode the key is up on purpose; only the length cap applies.
+                if self.isHandsFree { continue }
                 if self.isTriggerPhysicallyHeld {
                     sawHeld = true
                     misses = 0
@@ -224,6 +263,7 @@ final class AppController {
     private func stopRecording() {
         guard phase == .recording, let clip = recorder.stop() else { return }
         take = UUID() // retire this take's timers
+        isHandsFree = false
         if feedbackShown { playSound("Pop") }
 
         guard clip.duration >= Self.minimumClipDuration else {
@@ -249,6 +289,7 @@ final class AppController {
     func cancelRecording() {
         guard phase == .recording else { return }
         take = UUID()
+        isHandsFree = false
         if let clip = recorder.stop() {
             AudioRecorder.remove(clip.url)
         }

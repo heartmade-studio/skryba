@@ -136,6 +136,9 @@ struct SettingsView: View {
 
                 switch settings.trigger {
                 case .fn:
+                    Text("Hold Fn to talk. Tap it three times for hands-free mode, then tap once to stop.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     if !controller.fnKeyFree {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("macOS also acts on 🌐. Set **Keyboard → Press 🌐 key to → Do Nothing**.")

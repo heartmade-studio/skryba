@@ -23,6 +23,8 @@ showcase, so the code must stay small, readable, and well commented.
   the main thread (`MainActor.assumeIsolated`).
 - The HUD must stay a non-activating panel. Taking focus would break pasting.
 - One take at a time (`AppController.Phase`). Timers and tasks must check the take ID before acting.
+- Hands-free (`isHandsFree`, entered by `TripleTap`) must end on every exit from recording: stop,
+  cancel, trigger change, quit. The key-state watchdog is off in hands-free; only the length cap applies.
 - Paste only into the `PasteTarget` (app, window, field) captured at the start of the take; otherwise fall back
   to the clipboard. Never overwrite a clipboard the user changed meanwhile (`Paster.decide`).
 - Recordings live only in `AudioRecorder.directory`, and every path out of a take deletes its file.

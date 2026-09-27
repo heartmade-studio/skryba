@@ -8,7 +8,7 @@ import SwiftUI
 @MainActor
 final class RecordingHUD {
     enum Style: Equatable {
-        case recording, transcribing, cleaningUp
+        case recording, handsFree, transcribing, cleaningUp
         case error(String)
     }
 
@@ -73,6 +73,11 @@ private struct HUDView: View {
                     .foregroundStyle(.red)
                     .symbolEffect(.pulse)
                 Text("Listening…")
+            case .handsFree:
+                Image(systemName: "mic.fill")
+                    .foregroundStyle(.red)
+                    .symbolEffect(.pulse)
+                Text("Hands-free · tap Fn to stop")
             case .transcribing:
                 ProgressView()
                     .controlSize(.small)

@@ -8,7 +8,7 @@ It records while you hold the Fn (🌐) key, or a shortcut of your choice. It se
 the text field you were typing in.
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-17 Swift files, about 2,000 lines including comments.
+18 Swift files, about 2,100 lines including comments.
 
 **Status: 1.1.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
@@ -28,6 +28,7 @@ release      ──► discard if the level meter heard no voice
 |---|---|
 | `AppController.swift` | The state machine for one take at a time: idle → recording → transcribing → pasting → idle. It also enforces the 5-minute cap and polls the key state in case a key-up is lost. |
 | `FnKey.swift` | Hold-Fn trigger via NSEvent modifier monitors. Pressing any other key while Fn is down (Fn+⌫, Fn+↑) cancels the take. |
+| `TripleTap.swift` | Recognises three quick Fn taps, which switch to hands-free mode. |
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
@@ -89,6 +90,13 @@ SKRYBA_SIGN_IDENTITY="Your Identity Name" scripts/build.sh
 
 - **Hold Fn**, speak, and **release**. Taps shorter than 0.3 s and takes with no voice are ignored.
   One take can last up to 5 minutes.
+- **Hands-free:** tap Fn three times quickly (within a second) and keep talking without holding
+  anything. The HUD says *Hands-free · tap Fn to stop*. Tap Fn once to stop and transcribe, or use
+  **Cancel recording** in the menu to discard. The 5-minute cap still applies. Hands-free works with
+  the Fn trigger only.
+- If macOS Dictation is on with its shortcut set to *Press 🌐 twice* (System Settings → Keyboard →
+  Dictation), a triple tap starts both dictations. Pick another shortcut for macOS Dictation or
+  turn it off.
 - For Fn to be free, set **System Settings → Keyboard → Press 🌐 key to → Do Nothing**. Skryba
   warns you in Settings until you do.
 - Many third-party keyboards don't send Fn to macOS. In that case, switch **Hold to dictate** to a

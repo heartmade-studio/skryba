@@ -15,6 +15,17 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Hold Fn and stay silent for 2 s. You see "No speech detected" and nothing is pasted.
 - [ ] Tap Fn quickly (under 0.3 s). Nothing happens: no HUD, no sound.
 - [ ] Fn+⌫ deletes forward and Fn+↑ pages up, with no recording, HUD or sound.
+
+## Hands-free (1.2)
+
+- [ ] Tap Fn three times quickly. The HUD says *Hands-free · tap Fn to stop*, and recording goes on
+      with no key held. Speak, tap Fn once: the text is transcribed and pasted.
+- [ ] Tap Fn twice, then hold it to talk. That's normal push-to-talk, not hands-free.
+- [ ] Three slow taps (about a second apart) don't start hands-free.
+- [ ] In hands-free mode, type on the keyboard. Recording continues, and only an Fn tap stops it.
+- [ ] In hands-free mode, **Cancel recording** in the menu discards the take.
+- [ ] Switching **Hold to dictate** to a custom shortcut during hands-free stops the recording.
+- [ ] With macOS Dictation's shortcut on *Press 🌐 twice*, note what happens (README caveat).
 - [ ] Say a vocabulary term ("Heartmade"). It is spelled as in Settings.
 - [ ] Say "Dziękuję za uwagę" deliberately. It is pasted, not filtered.
 
