@@ -33,8 +33,9 @@ showcase, so the code must stay small, readable, and well commented.
 - AI cleanup is optional and must never lose a dictation: on any error or an unfaithful reply
   (`TextCleanup.rejection`, run on the final text), paste the plain transcript. Never log
   dictated text; log only the kind of rejection.
-- Do not sandbox the app. The App Sandbox blocks the synthetic ⌘V. Distribution is source-only
-  (no notarization, no Apple Developer Program).
+- Do not sandbox the app. The App Sandbox blocks the synthetic ⌘V. Distribution: source, plus an
+  unnotarized universal DMG attached to each GitHub release (no Apple Developer Program). The DMG
+  is built by hand with `hdiutil`, and the README explains Gatekeeper's "Open Anyway".
 - Signing identity: `Apple Development` auto-detected, or `SKRYBA_SIGN_IDENTITY`. Ad-hoc signing
   resets TCC permissions on every build. Keep that warning in `build.sh` and the README.
 - Code, comments, UI strings and docs in English.

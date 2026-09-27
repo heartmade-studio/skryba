@@ -44,10 +44,28 @@ release      ──► discard if the level meter heard no voice
 ## Requirements
 
 - macOS 14 Sonoma or later. Apple Silicon is tested; Intel should work but is untested.
-- Xcode 16 or later (for the Swift 6 toolchain)
 - A Groq API key. The free tier is enough: [console.groq.com/keys](https://console.groq.com/keys)
+- To build from source: Xcode 16 or later (for the Swift 6 toolchain)
 
-## Build & install
+## Download
+
+Download [Skryba.dmg](https://github.com/heartmade-studio/skryba/releases/latest/download/Skryba.dmg)
+from the [latest release](https://github.com/heartmade-studio/skryba/releases/latest), open it and
+drag Skryba into Applications. It is a universal build for Apple Silicon and Intel.
+
+Skryba is not notarized by Apple, so macOS blocks the first launch with *"Apple could not verify
+Skryba is free of malware"*. If you trust this build:
+
+1. Click **Done** in that dialog.
+2. Open System Settings → Privacy & Security, scroll down to the Skryba message and click
+   **Open Anyway**. Confirm with your password.
+3. Click **Open Anyway** once more when macOS asks again.
+
+You do this once for each version you download. If you'd rather not bypass Gatekeeper for an app that asks for
+Microphone and Accessibility access, read the code and build it yourself instead. Then continue with
+[First launch](#first-launch).
+
+## Build from source
 
 ```bash
 git clone https://github.com/heartmade-studio/skryba.git
@@ -55,18 +73,9 @@ cd skryba
 scripts/build.sh --install
 ```
 
-This builds `build/Skryba.app`, copies it to `/Applications`, and launches it. On first launch,
-Settings opens. Paste your Groq key, click **Save**, and grant two permissions:
+This builds `build/Skryba.app`, copies it to `/Applications`, and launches it.
 
-- **Microphone**, to record while you hold the trigger.
-- **Accessibility**, to see the Fn key while other apps are in front and to send ⌘V. Without it,
-  the Fn trigger won't work in other apps. A custom shortcut still works, but the text is only left
-  on your clipboard.
-
-Skryba is not notarized, so it's meant to be built from source. If you download a build someone
-else made, macOS Gatekeeper will block it.
-
-### Signing (read this, or permissions reset on every rebuild)
+### Signing your own build (read this, or permissions reset on every rebuild)
 
 macOS ties Microphone, Accessibility and keychain access to an app's code signature. If there is
 no signing identity, the build script signs *ad hoc*. An ad-hoc signature changes with every
@@ -86,6 +95,15 @@ different identity:
 ```bash
 SKRYBA_SIGN_IDENTITY="Your Identity Name" scripts/build.sh
 ```
+
+## First launch
+
+Settings opens. Paste your Groq key, click **Save**, and grant two permissions:
+
+- **Microphone**, to record while you hold the trigger.
+- **Accessibility**, to see the Fn key while other apps are in front and to send ⌘V. Without it,
+  the Fn trigger won't work in other apps. A custom shortcut still works, but the text is only left
+  on your clipboard.
 
 ## Usage
 
@@ -227,6 +245,22 @@ inside a real `.app` bundle.
 Automated tests cover the pure logic: vocabulary correction and the hallucination filter. The
 parts that touch the microphone, keyboard and clipboard are checked by hand with
 [docs/manual-tests.md](docs/manual-tests.md). Run through it before a release.
+
+Each release gets a universal, unnotarized `Skryba.dmg` attached. To build it (needs full Xcode for
+the second architecture):
+
+```bash
+scripts/build.sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+swift build -c release --arch arm64 --arch x86_64
+cp "$BIN/Skryba" build/Skryba.app/Contents/MacOS/
+lipo -archs build/Skryba.app/Contents/MacOS/Skryba   # expect: x86_64 arm64
+codesign --force --sign "Apple Development" build/Skryba.app
+rm -rf build/dmg && mkdir build/dmg && cp -R build/Skryba.app build/dmg/
+ln -s /Applications build/dmg/Applications
+hdiutil create -volname "Skryba" -srcfolder build/dmg -format UDZO -ov build/Skryba.dmg
+```
 
 Found a security issue? See [SECURITY.md](SECURITY.md).
 
