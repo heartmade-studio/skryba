@@ -9,11 +9,22 @@ struct SkrybaApp: App {
         MenuBarExtra {
             MenuContent(controller: appDelegate.controller)
         } label: {
-            if appDelegate.controller.phase == .idle, let icon = NSImage.menuBarIcon {
-                Image(nsImage: icon)
-            } else {
-                Image(systemName: appDelegate.controller.menuBarSymbol)
+            ZStack(alignment: .topTrailing) {
+                if appDelegate.controller.phase == .idle, let icon = NSImage.menuBarIcon {
+                    Image(nsImage: icon)
+                } else {
+                    Image(systemName: appDelegate.controller.menuBarSymbol)
+                }
+                if !appDelegate.controller.pendingRecordings.items.isEmpty {
+                    Circle()
+                        .fill(.orange)
+                        .frame(width: 8, height: 8)
+                        .overlay(Circle().stroke(.black.opacity(0.35), lineWidth: 1))
+                        .offset(x: 2, y: -1)
+                }
             }
+            .accessibilityLabel(appDelegate.controller.pendingRecordings.items.isEmpty
+                ? "Skryba" : "Skryba, saved recordings waiting")
         }
     }
 }
@@ -39,40 +50,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct MenuContent: View {
     let controller: AppController
+    @State private var recordingToDelete: PendingRecordings.Item?
 
     var body: some View {
-        if controller.phase.isRecording {
-            Button("Cancel recording") { controller.cancelRecording() }
-        } else {
-            Text("Hold \(controller.triggerName) to dictate")
-        }
-
-        if let error = controller.hotKeyError {
-            Text(error)
-        }
-        if controller.settings.apiKey.isEmpty {
-            Button("Add Groq API key…") { controller.openSettings() }
-        }
-        if !controller.microphoneGranted || !controller.accessibilityGranted {
-            Button("Grant permissions…") { controller.openSettings() }
-        }
-
-        if let last = controller.lastTranscript {
-            Divider()
-            Button("Copy last: \(last.truncated(to: 40))") { Paster.copy(last) }
-            if let raw = controller.lastRawTranscript {
-                Button("Copy without AI cleanup") { Paster.copy(raw) }
+        Group {
+            if controller.phase.isRecording {
+                Button("Cancel recording") { controller.cancelRecording() }
+            } else {
+                Text("Hold \(controller.triggerName) to dictate")
             }
+            Text(controller.settings.providerSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let error = controller.hotKeyError {
+                Text(error)
+            }
+            if !controller.pendingRecordings.items.isEmpty {
+                Divider()
+                Text("Transcription failed or is still pending. Your audio is saved.")
+                Text("Manual retries copy the transcript. Press ⌘V to paste it.")
+                if let latest = controller.latestPendingRecording {
+                    Button("Retry latest saved recording") {
+                        controller.retryPendingRecording(latest)
+                    }
+                    .disabled(isTranscribing)
+                }
+                Menu("Saved recordings (\(controller.pendingRecordings.items.count))") {
+                    ForEach(controller.pendingRecordings.items) { item in
+                        Menu(recordingLabel(item)) {
+                            Text("Saved \(item.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(durationLabel(item.duration))")
+                            Button("Retry and copy transcript") {
+                                controller.retryPendingRecording(item)
+                            }
+                            .disabled(isTranscribing)
+                            Button("Delete recording…", role: .destructive) {
+                                recordingToDelete = item
+                            }
+                        }
+                    }
+                }
+            }
+            if controller.settings.apiKey.isEmpty {
+                Button("Add Groq API key…") { controller.openSettings() }
+            }
+            if !controller.microphoneGranted || !controller.accessibilityGranted {
+                Button("Grant permissions…") { controller.openSettings() }
+            }
+
+            if let last = controller.lastTranscript {
+                Divider()
+                Button("Copy last: \(last.truncated(to: 40))") { Paster.copy(last) }
+                if let raw = controller.lastRawTranscript {
+                    Button("Copy without AI cleanup") { Paster.copy(raw) }
+                }
+            }
+
+            Divider()
+            Button("Settings…") { controller.openSettings() }
+                .keyboardShortcut(",")
+            Button("Quit Skryba") { NSApp.terminate(nil) }
+                .keyboardShortcut("q")
+
+            Divider()
+            Button("by Heartmade") { NSWorkspace.shared.open(Heartmade.url) }
         }
+        .confirmationDialog(
+            "Delete saved recording?",
+            isPresented: Binding(
+                get: { recordingToDelete != nil },
+                set: { if !$0 { recordingToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete recording", role: .destructive) {
+                if let recordingToDelete { controller.discardPendingRecording(recordingToDelete) }
+                recordingToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { recordingToDelete = nil }
+        } message: {
+            Text("This permanently deletes the saved audio. This cannot be undone.")
+        }
+    }
 
-        Divider()
-        Button("Settings…") { controller.openSettings() }
-            .keyboardShortcut(",")
-        Button("Quit Skryba") { NSApp.terminate(nil) }
-            .keyboardShortcut("q")
+    private var isTranscribing: Bool {
+        controller.phase == .transcribing || controller.phase == .pasting
+    }
 
-        Divider()
-        Button("by Heartmade") { NSWorkspace.shared.open(Heartmade.url) }
+    private func recordingLabel(_ item: PendingRecordings.Item) -> String {
+        "\(item.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(durationLabel(item.duration))"
+    }
+
+    private func durationLabel(_ duration: TimeInterval) -> String {
+        let seconds = Int(duration.rounded())
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }
 

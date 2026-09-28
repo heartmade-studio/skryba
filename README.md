@@ -3,9 +3,10 @@
 Hold **Fn**, speak, let go: your words appear as text wherever your cursor is.
 
 Skryba (Polish for *scribe*) is a small open-source macOS menu-bar app for push-to-talk dictation.
-It records while you hold the Fn (🌐) key, or a shortcut of your choice. It sends the audio to
-[Groq](https://groq.com)'s hosted **Whisper large-v3-turbo** model and pastes the transcript into
-the text field you were typing in.
+It records while you hold the Fn (🌐) key, or a shortcut of your choice. By default it sends audio
+to [Groq](https://groq.com)'s hosted **Whisper large-v3-turbo** model; you can instead use
+whisper.cpp locally, or configure Cloudflare Workers AI as an optional fallback. Skryba pastes the
+transcript into the text field you were typing in.
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
 19 Swift files, about 2,200 lines including comments.
@@ -18,7 +19,9 @@ untested, so bug reports are welcome.
 ```
 hold Fn      ──► AVAudioRecorder (16 kHz mono AAC, temp file) + level meter
 release      ──► discard if the level meter heard no voice
-             ──► POST /openai/v1/audio/transcriptions  (Groq, whisper-large-v3-turbo)
+             ──► selected primary: Groq Whisper (default) or local whisper.cpp
+             ──► optional fallbacks: local Whisper, then Cloudflare (Groq primary)
+                 or cloud providers only after explicit opt-in (local primary)
              ──► drop text Whisper invents on near-silence, fix vocabulary near misses
              ──► optional: AI cleanup of hesitations and your replacements (Groq chat model)
              ──► same app, window and field in focus? clipboard ← text, ⌘V, clipboard restored
@@ -32,6 +35,8 @@ release      ──► discard if the level meter heard no voice
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
+| `LocalWhisperTranscriber.swift` | Converts the saved clip to a temporary 16 kHz mono WAV, runs whisper.cpp directly, and removes temporary files. |
+| `CloudflareTranscriber.swift` | Optional final Workers AI Whisper fallback. |
 | `TextCleanup.swift` | Optional AI cleanup: a fixed prompt, model settings, and a guard that pastes the raw transcript unless the reply only removed hesitations and applied your replacements. |
 | `Replacements.swift` | Your rewrite rules for AI cleanup, one per line: "claude md → CLAUDE.md". |
 | `Hallucinations.swift` | Drops stock phrases ("Thanks for watching") and prompt echoes, but only from clips with under 0.8 s of voice. |
@@ -44,7 +49,11 @@ release      ──► discard if the level meter heard no voice
 ## Requirements
 
 - macOS 14 Sonoma or later. Apple Silicon is tested; Intel should work but is untested.
-- A Groq API key. The free tier is enough: [console.groq.com/keys](https://console.groq.com/keys)
+- A Groq API key if you use Groq: [console.groq.com/keys](https://console.groq.com/keys)
+- Local transcription needs `whisper-cli`, `ffmpeg`, and a multilingual Whisper model. Settings includes
+  setup links and a copyable assistant prompt. The local runner uses
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and the
+  [official multilingual model files](https://huggingface.co/ggerganov/whisper.cpp).
 - To build from source: Xcode 16 or later (for the Swift 6 toolchain)
 
 ## Download
@@ -98,7 +107,10 @@ SKRYBA_SIGN_IDENTITY="Your Identity Name" scripts/build.sh
 
 ## First launch
 
-Settings opens. Paste your Groq key, click **Save**, and grant two permissions:
+Settings opens. Groq is the primary provider by default. Paste a Groq key and click **Save**, or
+choose **Local Whisper** and configure its executable/model paths in **Transcription**. Cloudflare
+Workers AI can be enabled as an optional fallback. Local primary keeps audio on this Mac unless you
+explicitly enable cloud fallback. Grant two permissions:
 
 - **Microphone**, to record while you hold the trigger.
 - **Accessibility**, to see the Fn key while other apps are in front and to send ⌘V. Without it,
@@ -132,24 +144,43 @@ Settings opens. Paste your Groq key, click **Save**, and grant two permissions:
   near misses after transcription, for terms of five letters or more. It allows one wrong letter,
   or two for terms of eight letters or more.
 - **Language:** setting it explicitly (rather than *Auto-detect*) improves accuracy on short clips.
+- If transcription fails, Skryba keeps the audio and shows a pending indicator in the menu bar.
+  Choose **Retry latest saved recording** or a specific item under **Saved recordings**. Manual
+  retries copy the transcript to your clipboard; press ⌘V where you want it. Deleting a saved
+  recording asks for confirmation.
 - Silence detection is a level meter, not speech recognition. Loud background noise can pass it,
   and very quiet speech might not. The measured levels are logged (see Troubleshooting).
 
 ## Privacy
 
-Skryba has no servers, accounts, analytics or telemetry. It talks to one endpoint:
-`api.groq.com`.
+Skryba has no servers, analytics or telemetry. The primary provider is Groq by default, or local
+whisper.cpp when selected; Cloudflare Workers AI is an optional fallback configured in
+**Settings → Transcription**.
 
-- **What leaves your Mac:** the audio of each take, plus your vocabulary list (sent as Whisper's
-  prompt). With AI cleanup on, the transcript and your replacements also go to a Groq
-  chat model. If you put client names in the vocabulary, Groq receives them with every request. Read
-  [Groq's privacy policy](https://groq.com/privacy-policy/) if that matters for your use.
-- **What stays local:** your settings and vocabulary (in UserDefaults), the API key (in the
+- **What leaves your Mac:** Local whisper.cpp runs on this Mac and uses the selected language (or
+  Auto-detect) and vocabulary prompt. No audio is sent to a cloud provider when Local Whisper is
+  primary unless you explicitly enable cloud fallback. Groq receives audio and your vocabulary prompt when it is used.
+  Cloudflare receives audio and the optional language/vocabulary prompt only when its configured
+  fallback runs. With AI cleanup on, the transcript and replacements also go to Groq's chat model.
+  If your vocabulary contains client names, the selected cloud provider receives them. Read
+  [Groq's privacy policy](https://groq.com/privacy-policy/) and
+  [Cloudflare's privacy policy](https://www.cloudflare.com/privacypolicy/) if that matters for your use.
+- **What stays local:** provider settings and vocabulary (in UserDefaults), API tokens (in the
   keychain), and the last transcript (in memory only, shown under *Copy last*).
-- **Recordings** go to a private temporary folder and are deleted once the request finishes. They
-  are also cleared when Skryba quits and at the next launch after a crash. Deleting a file on an SSD
-  is not a secure erase.
+  Local model files and the configured tool paths also stay local. Temporary WAV/transcript files
+  created by local inference are removed after each attempt.
+- **Recordings** are saved with owner-only file permissions in your private Application Support
+  folder before upload. A failed request stays in the menu as a pending recording across restarts;
+  Skryba never retries or uploads it automatically. Choose **Retry latest saved recording** when ready,
+  or discard it from the menu. A recording is deleted after transcription succeeds or when you
+  explicitly discard it. An unfinished take cancelled or interrupted before it stops is discarded.
+  Deleting a file on an SSD is not a secure erase.
 - **Network:** an ephemeral URL session, so no cookies or HTTP cache are written to disk.
+- **Cloudflare usage:** the current Workers Free allowance is 10,000 Neurons/day, and this model
+  uses 46.63 Neurons per audio minute (about 214 minutes at the full daily allowance). Availability
+  is not guaranteed; Workers Paid usage above the free allocation is billed. Check
+  [Cloudflare's current pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)
+  and your account dashboard.
 - **Microphone:** it is on only during a take, and macOS shows its orange dot while it is.
 - **Accessibility** is a broad permission. Skryba uses it to notice the Fn key, to check which
   window and field have focus, and to send ⌘V. It never reads the content of your fields, and never

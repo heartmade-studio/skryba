@@ -27,6 +27,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Skryba records your voice only while you dictate: while you hold the shortcut, or in hands-free mode until you tap Fn again (at most 5 minutes). The recording is sent to Groq for transcription.</string>
+	<string>Skryba records your voice only while you dictate: while you hold the shortcut, or in hands-free mode until you tap Fn again (at most 5 minutes). Audio can be transcribed locally with whisper.cpp, or sent to Groq and, only when configured and enabled, Cloudflare Workers AI. When local Whisper is primary, audio stays on this Mac unless you explicitly enable cloud fallback.</string>
 </dict>
 </plist>

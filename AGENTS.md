@@ -1,7 +1,7 @@
 # AGENTS.md — skryba
 
 Public, open-source macOS menu-bar app (Swift 6, SwiftUI + AppKit, no dependencies) for
-push-to-talk dictation via Groq Whisper. Published under the `heartmade-studio` GitHub org as a
+push-to-talk dictation via Groq Whisper or local whisper.cpp, with optional Cloudflare Workers AI fallback. Published under the `heartmade-studio` GitHub org as a
 showcase, so the code must stay small, readable, and well commented.
 
 ## Build
@@ -16,7 +16,7 @@ showcase, so the code must stay small, readable, and well commented.
 
 ## Rules
 
-- **Public repo: never commit secrets.** The Groq key lives only in the keychain (`Keychain.swift`).
+- **Public repo: never commit secrets.** Groq and Cloudflare tokens live only in the keychain (`Keychain.swift`).
   No `.env` files, no keys in tests or docs.
 - No third-party dependencies without a strong reason. The small footprint is the point.
 - Keep everything under `@MainActor` unless there's a reason not to. Carbon callbacks arrive on
@@ -29,7 +29,17 @@ showcase, so the code must stay small, readable, and well commented.
   key-state watchdog is off in hands-free; only the length cap applies.
 - Paste only into the `PasteTarget` (app, window, field) captured at the start of the take; otherwise fall back
   to the clipboard. Never overwrite a clipboard the user changed meanwhile (`Paster.decide`).
-- Recordings live only in `AudioRecorder.directory`, and every path out of a take deletes its file.
+- Groq is the default primary; users may choose local `whisper.cpp`. Groq-primary routing may use
+  local Whisper and then configured Cloudflare. Local-primary routing stays local unless the user
+  explicitly enables cloud fallback; then it may try configured Groq and Cloudflare. Cloudflare
+  runs only when enabled and configured. Local transcription invokes `whisper-cli` and `ffmpeg`
+  with argv (never a shell), with temporary audio/text files removed after the attempt. Do not add
+  a daemon or server for local inference.
+- Unfinished/cancelled and invalid short or silent recordings are deleted. Each valid stopped take is
+  moved to the private `PendingRecordings` Application Support queue before upload; failed uploads
+  remain there across app restarts until a successful transcription or explicit user discard.
+  Never retry automatically at launch. Manual retries copy the transcript to the clipboard; they
+  never paste into a field from either the original take or the retry menu session.
 - AI cleanup is optional, and it only removes hesitations and applies the user's `Replacements`. It
   must never lose a dictation: on any error, or a reply that changed anything else
   (`TextCleanup.isAllowed`, run on the final text), paste the plain transcript. Never log

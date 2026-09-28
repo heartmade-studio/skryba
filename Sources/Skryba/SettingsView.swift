@@ -27,6 +27,9 @@ struct SettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var apiKeyDraft: String
     @State private var apiKeyStatus: APIKeyStatus?
+    @State private var cloudflareTokenDraft: String
+    @State private var cloudflareTokenStatus: APIKeyStatus?
+    @State private var setupPromptCopied = false
 
     private enum APIKeyStatus {
         case saved, failed
@@ -35,11 +38,13 @@ struct SettingsView: View {
     init(controller: AppController) {
         self.controller = controller
         _apiKeyDraft = State(initialValue: controller.settings.apiKey)
+        _cloudflareTokenDraft = State(initialValue: controller.settings.cloudflareToken)
     }
 
     private enum Tab: String, CaseIterable {
         case general = "General"
         case dictation = "Dictation"
+        case transcription = "Transcription"
         case cleanup = "AI Cleanup"
     }
 
@@ -60,6 +65,7 @@ struct SettingsView: View {
                 switch tab {
                 case .general: generalTab
                 case .dictation: dictationTab
+                case .transcription: transcriptionTab
                 case .cleanup: cleanupTab
                 }
             }
@@ -218,11 +224,113 @@ struct SettingsView: View {
             }
         }
     }
+
+    private var transcriptionTab: some View {
+        @Bindable var settings = controller.settings
+        return Form {
+            Section("Transcription provider") {
+                Picker("Primary provider", selection: $settings.primaryTranscriptionProvider) {
+                    ForEach(TranscriptionProvider.allCases) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
+                }
+                Text(settings.providerSummary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if settings.primaryTranscriptionProvider == .groq {
+                    Toggle("Use local Whisper if Groq fails", isOn: $settings.localFallbackEnabled)
+                } else {
+                    Toggle("Allow cloud fallback if local Whisper fails", isOn: $settings.allowCloudFallbackWhenLocal)
+                    FootnoteText(settings.allowCloudFallbackWhenLocal
+                        ? "If enabled, audio may be sent to Groq and then Cloudflare after local recognition fails."
+                        : "Local-only mode: audio stays on this Mac, even when local transcription fails.")
+                }
+            }
+
+            Section("Local Whisper (whisper.cpp)") {
+                TextField("whisper-cli path", text: $settings.whisperCLIPath)
+                    .textFieldStyle(.roundedBorder)
+                TextField("ffmpeg path", text: $settings.ffmpegPath)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Multilingual model path", text: $settings.whisperModelPath)
+                    .textFieldStyle(.roundedBorder)
+                Label(settings.localWhisperStatus, systemImage: settings.localWhisperReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(settings.localWhisperReady ? .green : .orange)
+
+                DisclosureGroup("Set up local transcription…") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        FootnoteText("Install whisper.cpp and ffmpeg, then download the multilingual ggml-small-q5_1.bin model. Set the executable and model paths above; try a short sample in your selected language or Auto-detect. Audio stays on your Mac when local-only mode is selected.")
+                        HStack {
+                            Link("whisper.cpp source", destination: URL(string: "https://github.com/ggml-org/whisper.cpp")!)
+                            Link("Official model files", destination: URL(string: "https://huggingface.co/ggerganov/whisper.cpp")!)
+                        }
+                        FootnoteText("Expected model SHA-256: ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb")
+                        Button(setupPromptCopied ? "Setup prompt copied" : "Copy setup prompt") {
+                            copyLocalSetupPrompt()
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+            }
+
+            Section("Cloudflare Workers AI fallback") {
+                Toggle("Enable Cloudflare after earlier providers fail", isOn: $settings.cloudflareFallbackEnabled)
+                TextField("Account ID", text: $settings.cloudflareAccountID)
+                    .textFieldStyle(.roundedBorder)
+                FootnoteText("Cloudflare Account IDs contain 32 hexadecimal characters.")
+                HStack {
+                    SecureField("API token", text: $cloudflareTokenDraft, prompt: Text("Stored in Keychain"))
+                        .onChange(of: cloudflareTokenDraft) { cloudflareTokenStatus = nil }
+                    Button("Save token", action: saveCloudflareToken)
+                        .disabled(cloudflareTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines) == settings.cloudflareToken)
+                }
+                switch cloudflareTokenStatus {
+                case .saved:
+                    Label("Saved to your Keychain.", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green).font(.callout)
+                case .failed:
+                    Label("Couldn't save to your Keychain. The previous token is unchanged.", systemImage: "xmark.octagon.fill")
+                        .foregroundStyle(.red).font(.callout)
+                case nil:
+                    EmptyView()
+                }
+                Link("Cloudflare Workers AI setup", destination: URL(string: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/")!)
+                    .font(.callout)
+                FootnoteText("Audio is sent to your Cloudflare account when this fallback runs. The current Workers Free allowance is 10,000 Neurons/day; this model uses 46.63 Neurons/audio minute (about 214 minutes at the full allowance). This is not guaranteed availability. Workers Paid usage above the daily free allocation is billed. Check Cloudflare pricing and your dashboard.")
+                Link("Workers AI pricing", destination: URL(string: "https://developers.cloudflare.com/workers-ai/platform/pricing/")!)
+                    .font(.callout)
+            }
+        }
+    }
 }
 
 extension SettingsView {
     private func saveAPIKey() {
         apiKeyStatus = controller.settings.saveAPIKey(apiKeyDraft) ? .saved : .failed
+    }
+
+    private func saveCloudflareToken() {
+        cloudflareTokenStatus = controller.settings.saveCloudflareToken(cloudflareTokenDraft) ? .saved : .failed
+    }
+
+    private func copyLocalSetupPrompt() {
+        let prompt = """
+        Help me set up local, offline speech transcription for Skryba on this Mac.
+
+        1. Detect the operating system and CPU architecture before choosing installation steps.
+        2. Install whisper.cpp (https://github.com/ggml-org/whisper.cpp) and ffmpeg from official sources.
+        3. Download the multilingual ggml-small-q5_1.bin model from https://huggingface.co/ggerganov/whisper.cpp.
+        4. Verify the model SHA-256 is exactly:
+           ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb
+        5. Tell me the full paths to whisper-cli, ffmpeg, and the model, then show me how to enter and verify them in Skryba → Settings → Transcription.
+        6. Test with a short sample spoken in Skryba's selected language (or Auto-detect), keeping the recording on this Mac.
+        7. Explain whether Skryba needs restarting and how to restart it safely.
+
+        Do not ask for API keys or passwords. Do not upload, transmit, or share any recording or transcript. Do not use unofficial model/tool downloads. Explain any privileged or destructive step before running it.
+        """
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(prompt, forType: .string)
+        setupPromptCopied = true
     }
 }
 

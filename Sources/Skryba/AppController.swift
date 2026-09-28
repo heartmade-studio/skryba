@@ -37,6 +37,7 @@ final class AppController {
     private(set) var fnKeyFree = FnKey.isFreeForApps
 
     let settings = Settings()
+    let pendingRecordings = PendingRecordings()
 
     @ObservationIgnored private let hotKey = HotKey()
     @ObservationIgnored private let fnKey = FnKey()
@@ -71,12 +72,17 @@ final class AppController {
         }
     }
 
+    var latestPendingRecording: PendingRecordings.Item? {
+        pendingRecordings.items.max { $0.createdAt < $1.createdAt }
+    }
+
     private var isBusy: Bool {
         phase.isRecording || phase == .transcribing || phase == .pasting
     }
 
     func start() {
         AudioRecorder.removeLeftovers()
+        pendingRecordings.reload()
         hotKey.onPress = { [weak self] in self?.startRecording() }
         hotKey.onRelease = { [weak self] in self?.stopRecording() }
         fnKey.onPress = { [weak self] in self?.fnPressed() }
@@ -86,12 +92,12 @@ final class AppController {
         refreshPermissions()
         watchPermissions()
 
-        if settings.apiKey.isEmpty || !microphoneGranted || !accessibilityGranted {
+        if !settings.canStartTranscription || !microphoneGranted || !accessibilityGranted {
             openSettings()
         }
     }
 
-    /// Called when the app quits: stop the microphone and delete any recording.
+    /// Called when the app quits: stop the microphone and discard only an unfinished take.
     func shutdown() {
         cancelRecording()
         AudioRecorder.removeLeftovers()
@@ -196,8 +202,8 @@ final class AppController {
     private func startRecording() -> Bool {
         // Carbon may repeat "pressed" while the key is held; an unfinished take also blocks a new one.
         guard !isBusy else { return false }
-        guard !settings.apiKey.isEmpty else {
-            fail("Add your Groq API key in Settings.")
+        guard settings.canStartTranscription else {
+            fail("Configure a transcription provider in Settings before recording.")
             openSettings()
             return false
         }
@@ -285,10 +291,18 @@ final class AppController {
             return
         }
 
+        let pending: PendingRecordings.Item
+        do {
+            pending = try pendingRecordings.keep(clip)
+        } catch {
+            fail("Could not save recording for retry: \(error.localizedDescription)")
+            return
+        }
+
         phase = .transcribing
         hud.show(.transcribing)
         let target = pasteTarget
-        Task { await transcribe(clip, pasteInto: target) }
+        Task { await transcribe(pending, pasteInto: target, delivery: .paste) }
     }
 
     /// Ends a take without sending anything: another key joined the trigger (it was a shortcut, not
@@ -306,24 +320,76 @@ final class AppController {
         hud.hide()
     }
 
-    private func transcribe(_ clip: Clip, pasteInto target: PasteTarget?) async {
-        defer { AudioRecorder.remove(clip.url) }
+    /// Manual retries copy the transcript instead of pasting into a possibly unrelated field.
+    func retryPendingRecording(_ pending: PendingRecordings.Item) {
+        guard !isBusy, pendingRecordings.items.contains(pending) else { return }
+        take = UUID()
+        phase = .transcribing
+        hud.show(.transcribing)
+        Task { await transcribe(pending, pasteInto: nil, delivery: .copy) }
+    }
+
+    func discardPendingRecording(_ item: PendingRecordings.Item) {
+        pendingRecordings.remove(item)
+    }
+
+    private enum Delivery: Equatable { case paste, copy }
+
+    private func transcribe(
+        _ pending: PendingRecordings.Item, pasteInto target: PasteTarget?, delivery: Delivery
+    ) async {
         var text: String
         let vocabulary = Vocabulary(settings.vocabulary)
-        do {
-            let transcript = try await GroqClient(apiKey: settings.apiKey).transcribe(
-                fileURL: clip.url,
-                language: settings.language,
-                prompt: vocabulary.prompt
-            )
-            let invented = Hallucinations.isLikely(
-                transcript, prompt: vocabulary.prompt, voicedDuration: clip.voicedDuration
-            )
-            text = invented ? "" : vocabulary.correct(transcript)
-        } catch {
-            fail(error.localizedDescription)
+        let providers = settings.configuredTranscriptionRoutes
+        let successful = await TranscriptionRouting.firstSuccessful(
+            routes: providers,
+            onAttempt: { provider in
+                switch provider {
+                case .groq: hud.show(.transcribing)
+                case .localWhisper: hud.show(.tryingProvider("Trying local transcription…"))
+                case .cloudflare: hud.show(.tryingProvider("Trying Cloudflare…"))
+                }
+            },
+            onRejectedResult: { provider in
+                Self.log.notice("transcription provider returned empty or rejected text: \(provider.rawValue, privacy: .public)")
+            },
+            onProviderError: { provider in
+                // Provider errors can contain server details; log only the provider identity.
+                Self.log.notice("transcription provider failed: \(provider.rawValue, privacy: .public)")
+            },
+            operation: { provider in
+                switch provider {
+                case .groq:
+                    try await GroqClient(apiKey: settings.apiKey).transcribe(
+                        fileURL: pending.url, language: settings.language, prompt: vocabulary.prompt
+                    )
+                case .localWhisper:
+                    try await LocalWhisperTranscriber(
+                        whisperCLIPath: settings.whisperCLIPath,
+                        ffmpegPath: settings.ffmpegPath,
+                        modelPath: settings.whisperModelPath
+                    ).transcribe(fileURL: pending.url, language: settings.language, prompt: vocabulary.prompt)
+                case .cloudflare:
+                    try await CloudflareTranscriber(
+                        accountID: settings.cloudflareAccountID, token: settings.cloudflareToken
+                    ).transcribe(fileURL: pending.url, language: settings.language, prompt: vocabulary.prompt)
+                }
+            },
+            accepts: { candidate in
+                let normalized = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !normalized.isEmpty && !Hallucinations.isLikely(
+                    normalized, prompt: vocabulary.prompt, voicedDuration: pending.voicedDuration
+                )
+            }
+        )
+        guard let successful else {
+            fail("Transcription failed. Recording saved. Retry from the Skryba menu.")
             return
         }
+        text = vocabulary.correct(successful.value.trimmingCharacters(in: .whitespacesAndNewlines))
+
+        // A successful transcription is the point at which the saved audio is no longer needed.
+        pendingRecordings.remove(pending)
 
         var cleanupWarning: String?
         let raw = text
@@ -339,6 +405,12 @@ final class AppController {
         }
         lastTranscript = text
         lastRawTranscript = raw == text ? nil : raw
+        if delivery == .copy {
+            Paster.copy(text)
+            phase = .idle
+            if let cleanupWarning { fail("Transcript copied. \(cleanupWarning)") }
+            return
+        }
         phase = .pasting
         let outcome = await Paster.paste(text, into: target)
         phase = .idle

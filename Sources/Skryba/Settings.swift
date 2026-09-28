@@ -6,6 +6,31 @@ import Observation
 final class Settings {
     /// Mirrors the keychain; change it only through `saveAPIKey`.
     private(set) var apiKey: String
+    private(set) var cloudflareToken: String
+    var primaryTranscriptionProvider: TranscriptionProvider {
+        didSet { defaults.set(primaryTranscriptionProvider.rawValue, forKey: Key.primaryTranscriptionProvider) }
+    }
+    var localFallbackEnabled: Bool {
+        didSet { defaults.set(localFallbackEnabled, forKey: Key.localFallbackEnabled) }
+    }
+    var allowCloudFallbackWhenLocal: Bool {
+        didSet { defaults.set(allowCloudFallbackWhenLocal, forKey: Key.allowCloudFallbackWhenLocal) }
+    }
+    var whisperCLIPath: String {
+        didSet { defaults.set(whisperCLIPath, forKey: Key.whisperCLIPath) }
+    }
+    var ffmpegPath: String {
+        didSet { defaults.set(ffmpegPath, forKey: Key.ffmpegPath) }
+    }
+    var whisperModelPath: String {
+        didSet { defaults.set(whisperModelPath, forKey: Key.whisperModelPath) }
+    }
+    var cloudflareAccountID: String {
+        didSet { defaults.set(cloudflareAccountID, forKey: Key.cloudflareAccountID) }
+    }
+    var cloudflareFallbackEnabled: Bool {
+        didSet { defaults.set(cloudflareFallbackEnabled, forKey: Key.cloudflareFallbackEnabled) }
+    }
     var trigger: Trigger {
         didSet { defaults.set(trigger.rawValue, forKey: Key.trigger) }
     }
@@ -35,6 +60,48 @@ final class Settings {
         didSet { defaults.set(replacements, forKey: Key.replacements) }
     }
 
+    var providerSummary: String {
+        let cloudflare: String
+        if !cloudflareFallbackEnabled {
+            cloudflare = "Cloudflare fallback off"
+        } else if isCloudflareConfigured {
+            cloudflare = "Cloudflare fallback enabled"
+        } else {
+            cloudflare = "Cloudflare fallback needs Account ID and token"
+        }
+        let primary = primaryTranscriptionProvider == .groq ? "Groq" : "Local Whisper"
+        return "Primary: \(primary) · \(cloudflare)"
+    }
+
+    var localWhisperStatus: String {
+        LocalWhisperTranscriber.preflight(cliPath: whisperCLIPath, ffmpegPath: ffmpegPath, modelPath: whisperModelPath)
+    }
+
+    var localWhisperReady: Bool { localWhisperStatus.hasPrefix("Ready") }
+
+    var configuredTranscriptionRoutes: [TranscriptionRoute] {
+        TranscriptionRouting.providers(
+            primary: primaryTranscriptionProvider,
+            groqConfigured: !apiKey.isEmpty,
+            localFallbackEnabled: localFallbackEnabled && localWhisperReady,
+            cloudflareEnabled: cloudflareFallbackEnabled,
+            cloudflareConfigured: isCloudflareConfigured,
+            allowCloudFallbackWhenLocal: allowCloudFallbackWhenLocal
+        )
+    }
+
+    var canStartTranscription: Bool {
+        if primaryTranscriptionProvider == .localWhisper, !localWhisperReady {
+            return allowCloudFallbackWhenLocal && ( !apiKey.isEmpty || (cloudflareFallbackEnabled && isCloudflareConfigured) )
+        }
+        return !configuredTranscriptionRoutes.isEmpty
+    }
+
+    var isCloudflareConfigured: Bool {
+        let id = cloudflareAccountID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return id.range(of: "^[A-Fa-f0-9]{32}$", options: .regularExpression) != nil && !cloudflareToken.isEmpty
+    }
+
     @ObservationIgnored private let defaults = UserDefaults.standard
 
     /// What you hold to dictate.
@@ -62,19 +129,44 @@ final class Settings {
         static let cleanupEnabled = "cleanupEnabled"
         static let cleanupModel = "cleanupModel"
         static let replacements = "replacements"
+        static let cloudflareAccountID = "cloudflareAccountID"
+        static let cloudflareFallbackEnabled = "cloudflareFallbackEnabled"
+        static let primaryTranscriptionProvider = "primaryTranscriptionProvider"
+        static let localFallbackEnabled = "localFallbackEnabled"
+        static let allowCloudFallbackWhenLocal = "allowCloudFallbackWhenLocal"
+        static let whisperCLIPath = "whisperCLIPath"
+        static let ffmpegPath = "ffmpegPath"
+        static let whisperModelPath = "whisperModelPath"
     }
 
     /// Returns false if the keychain refused the write; the previous key then stays in place.
     func saveAPIKey(_ key: String) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard Keychain.save(trimmed) else { return false }
+        guard Keychain.saveGroqKey(trimmed) else { return false }
         apiKey = trimmed
+        return true
+    }
+
+    func saveCloudflareToken(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Keychain.saveCloudflareToken(trimmed) else { return false }
+        cloudflareToken = trimmed
         return true
     }
 
     init() {
         let defaults = UserDefaults.standard
-        apiKey = Keychain.read() ?? ""
+        apiKey = Keychain.readGroqKey() ?? ""
+        cloudflareToken = Keychain.readCloudflareToken() ?? ""
+        primaryTranscriptionProvider = defaults.string(forKey: Key.primaryTranscriptionProvider)
+            .flatMap(TranscriptionProvider.init(rawValue:)) ?? .groq
+        localFallbackEnabled = defaults.object(forKey: Key.localFallbackEnabled) as? Bool ?? true
+        allowCloudFallbackWhenLocal = defaults.bool(forKey: Key.allowCloudFallbackWhenLocal)
+        whisperCLIPath = defaults.string(forKey: Key.whisperCLIPath) ?? LocalWhisperTranscriber.defaultCLIPath()
+        ffmpegPath = defaults.string(forKey: Key.ffmpegPath) ?? LocalWhisperTranscriber.defaultFFmpegPath()
+        whisperModelPath = defaults.string(forKey: Key.whisperModelPath) ?? LocalWhisperTranscriber.defaultModelPath()
+        cloudflareAccountID = defaults.string(forKey: Key.cloudflareAccountID) ?? ""
+        cloudflareFallbackEnabled = defaults.bool(forKey: Key.cloudflareFallbackEnabled)
         trigger = defaults.string(forKey: Key.trigger).flatMap(Trigger.init) ?? .fn
         shortcut = defaults.data(forKey: Key.shortcut)
             .flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .default
