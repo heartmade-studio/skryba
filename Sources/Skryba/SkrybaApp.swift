@@ -9,10 +9,11 @@ struct SkrybaApp: App {
         MenuBarExtra {
             MenuContent(controller: appDelegate.controller)
         } label: {
-            if appDelegate.controller.phase == .idle, let icon = NSImage.menuBarIcon {
+            let controller = appDelegate.controller
+            if controller.phase == .idle, controller.pendingRecordings.items.isEmpty, let icon = NSImage.menuBarIcon {
                 Image(nsImage: icon)
             } else {
-                Image(systemName: appDelegate.controller.menuBarSymbol)
+                Image(systemName: controller.menuBarSymbol)
             }
         }
     }
@@ -43,18 +44,38 @@ struct MenuContent: View {
     var body: some View {
         if controller.phase.isRecording {
             Button("Cancel recording") { controller.cancelRecording() }
+        } else if controller.phase == .transcribing {
+            Button("Cancel transcription") { controller.cancelTranscription() }
         } else {
             Text("Hold \(controller.triggerName) to dictate")
+        }
+        if !controller.network.isOnline {
+            Text("Offline")
         }
 
         if let error = controller.hotKeyError {
             Text(error)
         }
-        if controller.settings.apiKey.isEmpty {
-            Button("Add Groq API key…") { controller.openSettings() }
+        if !controller.settings.canTranscribe {
+            Button("Set up transcription…") { controller.openSettings() }
         }
         if !controller.microphoneGranted || !controller.accessibilityGranted {
             Button("Grant permissions…") { controller.openSettings() }
+        }
+
+        let pending = controller.pendingRecordings.items
+        if !pending.isEmpty {
+            Divider()
+            Text(pending.count == 1 ? "1 saved recording" : "\(pending.count) saved recordings")
+            // Newest first: usually the one you just lost.
+            ForEach(pending.reversed()) { item in
+                Menu(item.label) {
+                    Button("Transcribe and copy") { controller.retry(item) }
+                        .disabled(controller.phase != .idle)
+                    Button("Delete…") { controller.delete(item) }
+                        .disabled(controller.phase == .transcribing)
+                }
+            }
         }
 
         if let last = controller.lastTranscript {
@@ -89,6 +110,15 @@ private extension NSImage {
         image?.size = NSSize(width: 18, height: 18)
         return image
     }()
+}
+
+private extension PendingRecordings.Item {
+    /// "14:05 · 0:42" for today, with the date for older ones.
+    var label: String {
+        let seconds = Int(duration.rounded())
+        let time = createdAt.formatted(date: Calendar.current.isDateInToday(createdAt) ? .omitted : .abbreviated, time: .shortened)
+        return seconds > 0 ? "\(time) · \(seconds / 60):\(String(format: "%02d", seconds % 60))" : time
+    }
 }
 
 private extension String {

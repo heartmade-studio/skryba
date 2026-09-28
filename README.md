@@ -4,11 +4,13 @@ Hold **Fn**, speak, let go: your words appear as text wherever your cursor is.
 
 Skryba (Polish for *scribe*) is a small open-source macOS menu-bar app for push-to-talk dictation.
 It records while you hold the Fn (🌐) key, or a shortcut of your choice. It sends the audio to
-[Groq](https://groq.com)'s hosted **Whisper large-v3-turbo** model and pastes the transcript into
-the text field you were typing in.
+**Whisper large-v3-turbo**, hosted by [Groq](https://groq.com) or, if you prefer,
+[Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/), and pastes the transcript
+into the text field you were typing in. No internet? The take is kept, and you can transcribe it
+later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-19 Swift files, about 2,200 lines including comments.
+24 Swift files, about 3,100 lines including comments.
 
 **Status: 1.3.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
@@ -18,7 +20,9 @@ untested, so bug reports are welcome.
 ```
 hold Fn      ──► AVAudioRecorder (16 kHz mono AAC, temp file) + level meter
 release      ──► discard if the level meter heard no voice
-             ──► POST /openai/v1/audio/transcriptions  (Groq, whisper-large-v3-turbo)
+             ──► save the take to a private queue (kept until it's transcribed)
+             ──► Groq or Cloudflare (whisper-large-v3-turbo); visible, cancellable retries
+                 offline or failed? whisper.cpp on this Mac if enabled, else keep it for later
              ──► drop text Whisper invents on near-silence, fix vocabulary near misses
              ──► optional: AI cleanup of hesitations and your replacements (Groq chat model)
              ──► same app, window and field in focus? clipboard ← text, ⌘V, clipboard restored
@@ -32,6 +36,11 @@ release      ──► discard if the level meter heard no voice
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
+| `CloudflareClient.swift` | The same Whisper model through Cloudflare Workers AI, as an alternative to Groq. |
+| `LocalWhisper.swift` | Optional offline transcription: converts the take to WAV with AVFoundation and runs `whisper-cli` directly (no shell). Cancelling or a timeout stops it. |
+| `PendingRecordings.swift` | Takes not transcribed yet: a private folder, left out of backups, emptied after 7 days. |
+| `NetworkMonitor.swift` | Knows when the Mac has no network, so the HUD says "Offline" as soon as you start. |
+| `Retry.swift` | Which failures are worth another attempt (a stalled upload, a busy server) and which aren't (no network, a rejected key). |
 | `TextCleanup.swift` | Optional AI cleanup: a fixed prompt, model settings, and a guard that pastes the raw transcript unless the reply only removed hesitations and applied your replacements. |
 | `Replacements.swift` | Your rewrite rules for AI cleanup, one per line: "claude md → CLAUDE.md". |
 | `Hallucinations.swift` | Drops stock phrases ("Thanks for watching") and prompt echoes, but only from clips with under 0.8 s of voice. |
@@ -39,12 +48,15 @@ release      ──► discard if the level meter heard no voice
 | `PasteTarget.swift` | Remembers the app, window and text field that had focus when the take started, read through the Accessibility API. |
 | `Paster.swift` | The paste step: a transient clipboard item, then ⌘V, then your clipboard restored. It refuses if the focus moved, and never overwrites something you copied meanwhile. |
 | `RecordingHUD.swift` | A non-activating floating pill, so it never steals focus from the app you're typing in. |
-| `Keychain.swift` | Keeps the API key in the macOS keychain, not in files or UserDefaults. |
+| `Keychain.swift` | Keeps the API credentials in the macOS keychain, not in files or UserDefaults. |
 
 ## Requirements
 
 - macOS 14 Sonoma or later. Apple Silicon is tested; Intel should work but is untested.
-- A Groq API key. The free tier is enough: [console.groq.com/keys](https://console.groq.com/keys)
+- A Groq API key. The free tier is enough: [console.groq.com/keys](https://console.groq.com/keys).
+  Or a Cloudflare account ID and a Workers AI API token.
+- Optional, for offline use: [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+  (`brew install whisper-cpp`) and a multilingual model file.
 - To build from source: Xcode 16 or later (for the Swift 6 toolchain)
 
 ## Download
@@ -98,7 +110,8 @@ SKRYBA_SIGN_IDENTITY="Your Identity Name" scripts/build.sh
 
 ## First launch
 
-Settings opens. Paste your Groq key, click **Save**, and grant two permissions:
+Settings opens. Paste your Groq key (or pick Cloudflare and enter its account ID and token), click
+**Save**, and grant two permissions:
 
 - **Microphone**, to record while you hold the trigger.
 - **Accessibility**, to see the Fn key while other apps are in front and to send ⌘V. Without it,
@@ -132,23 +145,27 @@ Settings opens. Paste your Groq key, click **Save**, and grant two permissions:
   near misses after transcription, for terms of five letters or more. It allows one wrong letter,
   or two for terms of eight letters or more.
 - **Language:** setting it explicitly (rather than *Auto-detect*) improves accuracy on short clips.
+- **Offline or a bad connection:** see [No internet](#no-internet) below.
 - Silence detection is a level meter, not speech recognition. Loud background noise can pass it,
   and very quiet speech might not. The measured levels are logged (see Troubleshooting).
 
 ## Privacy
 
-Skryba has no servers, accounts, analytics or telemetry. It talks to one endpoint:
-`api.groq.com`.
+Skryba has no servers, accounts, analytics or telemetry. It talks to the provider you chose:
+`api.groq.com` or `api.cloudflare.com`.
 
 - **What leaves your Mac:** the audio of each take, plus your vocabulary list (sent as Whisper's
-  prompt). With AI cleanup on, the transcript and your replacements also go to a Groq
-  chat model. If you put client names in the vocabulary, Groq receives them with every request. Read
-  [Groq's privacy policy](https://groq.com/privacy-policy/) if that matters for your use.
+  prompt), to that one provider. With AI cleanup on, the transcript and your replacements also go
+  to a Groq chat model, whichever provider transcribes. If you put client names in the vocabulary,
+  the provider receives them with every request. Read
+  [Groq's privacy policy](https://groq.com/privacy-policy/) or Cloudflare's if that matters for
+  your use. Local Whisper sends nothing anywhere.
 - **What stays local:** your settings and vocabulary (in UserDefaults), the API key (in the
   keychain), and the last transcript (in memory only, shown under *Copy last*).
-- **Recordings** go to a private temporary folder and are deleted once the request finishes. They
-  are also cleared when Skryba quits and at the next launch after a crash. Deleting a file on an SSD
-  is not a secure erase.
+- **Recordings** are kept in `~/Library/Application Support/Skryba/Pending` (readable only by you,
+  left out of Time Machine) until they are transcribed. A take that couldn't be transcribed stays
+  there until you transcribe or delete it from the menu, and for at most 7 days. Deleting a file on
+  an SSD is not a secure erase.
 - **Network:** an ephemeral URL session, so no cookies or HTTP cache are written to disk.
 - **Microphone:** it is on only during a take, and macOS shows its orange dot while it is.
 - **Accessibility** is a broad permission. Skryba uses it to notice the Fn key, to check which
@@ -159,6 +176,26 @@ Skryba has no servers, accounts, analytics or telemetry. It talks to one endpoin
   pasting isn't possible, the text stays on your clipboard as a normal item.
 - The **by Heartmade** links open heartmade.pl with a `utm_source=skryba` tag, and only when you
   click them.
+
+## No internet
+
+Skryba never throws a dictation away because the network is gone.
+
+- **Offline when you start:** the HUD says *Offline · will be saved for later* (or *will transcribe
+  on this Mac*) while you speak. Recording works as usual.
+- **A bad connection:** a stalled upload is retried up to three times, within about 40 seconds. The
+  HUD shows each attempt with a **Cancel** button; **Cancel transcription** in the menu does the
+  same. No network at all, or a rejected key, isn't retried.
+- **What happens to the take:** if it can't be transcribed, or you cancel, it's saved. The menu-bar
+  icon turns into a tray, and the menu lists saved recordings. **Transcribe and copy** puts the
+  text on your clipboard (it isn't pasted: the field you dictated into is long gone). When the
+  network comes back, a short notice reminds you. Nothing is sent by itself.
+- **Local Whisper (optional, off by default):** Settings → Offline. Install whisper.cpp
+  (`brew install whisper-cpp`), download a multilingual model from
+  [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp/tree/main), for example
+  `ggml-large-v3-turbo.bin` (1.6 GB, best for Polish) or `ggml-small.bin` (0.5 GB, faster), and
+  choose it in Settings. Skryba then transcribes on your Mac whenever the cloud is offline or fails.
+  AI cleanup is skipped while offline.
 
 ## AI cleanup (optional, off by default)
 
@@ -189,6 +226,9 @@ like "no" or "tego".
 Groq bills whisper-large-v3-turbo at $0.04 per hour of audio, with a 10-second minimum per request
 (pricing as of September 2026, so check Groq's site). One thousand short dictations come to about
 $0.11.
+
+Cloudflare lists the same model at $0.000513 per audio minute ($0.03 per hour), and its Workers
+free allocation covers light use. Local Whisper costs nothing but your Mac's time.
 
 AI cleanup adds token costs: $0.15/$0.60 per million input/output tokens for GPT-OSS 120B, and
 $0.80/$4.00 for Qwen 3.8 27B. A short dictation is at most about 450 tokens in
@@ -221,8 +261,9 @@ These are estimates; your Groq dashboard shows the real numbers.
 4. Revoke its permissions: in System Settings → Privacy & Security, select Skryba under
    **Microphone** and **Accessibility** and click **−**.
 
-If you skipped step 1, remove the key with
-`security delete-generic-password -s pl.heartmade.skryba`.
+If you skipped step 1, remove the keys with
+`security delete-generic-password -s pl.heartmade.skryba` (run it once per key), and saved
+recordings with `rm -rf ~/Library/Application\ Support/Skryba`.
 
 ## Development
 
@@ -237,7 +278,9 @@ You can open `Package.swift` in Xcode to edit the code. Run through `scripts/bui
 Xcode's Run button, because the app needs its `Info.plist` (microphone usage string, `LSUIElement`)
 inside a real `.app` bundle.
 
-Automated tests cover the pure logic: vocabulary correction and the hallucination filter. The
+Automated tests cover the pure logic: vocabulary correction, the hallucination filter, the retry
+rules and the saved-recordings queue. With whisper.cpp installed, one more test runs a real
+transcription: `SKRYBA_WHISPER_MODEL=/path/to/ggml-….bin swift test`. The
 parts that touch the microphone, keyboard and clipboard are checked by hand with
 [docs/manual-tests.md](docs/manual-tests.md). Run through it before a release.
 

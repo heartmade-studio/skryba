@@ -1,8 +1,9 @@
 # AGENTS.md — skryba
 
 Public, open-source macOS menu-bar app (Swift 6, SwiftUI + AppKit, no dependencies) for
-push-to-talk dictation via Groq Whisper. Published under the `heartmade-studio` GitHub org as a
-showcase, so the code must stay small, readable, and well commented.
+push-to-talk dictation via Groq Whisper (or Cloudflare Workers AI, with optional local
+whisper.cpp). Published under the `heartmade-studio` GitHub org as a showcase, so the code must
+stay small, readable, and well commented.
 
 ## Build
 
@@ -16,7 +17,7 @@ showcase, so the code must stay small, readable, and well commented.
 
 ## Rules
 
-- **Public repo: never commit secrets.** The Groq key lives only in the keychain (`Keychain.swift`).
+- **Public repo: never commit secrets.** API keys and tokens live only in the keychain (`Keychain.swift`).
   No `.env` files, no keys in tests or docs.
 - No third-party dependencies without a strong reason. The small footprint is the point.
 - Keep everything under `@MainActor` unless there's a reason not to. Carbon callbacks arrive on
@@ -29,7 +30,17 @@ showcase, so the code must stay small, readable, and well commented.
   key-state watchdog is off in hands-free; only the length cap applies.
 - Paste only into the `PasteTarget` (app, window, field) captured at the start of the take; otherwise fall back
   to the clipboard. Never overwrite a clipboard the user changed meanwhile (`Paster.decide`).
-- Recordings live only in `AudioRecorder.directory`, and every path out of a take deletes its file.
+- A take lives in `AudioRecorder.directory` while it records. A valid finished take moves to
+  `PendingRecordings` before anything is sent, and leaves it once transcribed (an empty or
+  hallucinated result counts as transcribed). Failures, offline and cancels keep it there for a
+  manual retry from the menu; nothing is re-sent by itself. The queue stays private, out of backups,
+  and expires after `PendingRecordings.maximumAge`. A cancelled recording (as opposed to a cancelled
+  transcription), a too-short or a silent take is deleted.
+- One cloud provider at a time (`Settings.provider`: Groq or Cloudflare); no cloud-to-cloud chain.
+  Local Whisper is opt-in, runs only when the cloud is offline or failed, and starts `whisper-cli`
+  directly (argv, never a shell). Every wait on the network or on whisper-cli must be visible in
+  the HUD and cancellable (`cancelTranscription`); retries follow `Retry`.
+- Retries from the menu copy the transcript to the clipboard; only a fresh take pastes.
 - AI cleanup is optional, and it only removes hesitations and applies the user's `Replacements`. It
   must never lose a dictation: on any error, or a reply that changed anything else
   (`TextCleanup.isAllowed`, run on the final text), paste the plain transcript. Never log

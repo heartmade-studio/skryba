@@ -3,10 +3,14 @@ import AVFoundation
 import Observation
 import os
 
-/// Orchestrates the dictation loop: key down → record → key up → Groq → paste.
+/// Orchestrates the dictation loop: key down → record → key up → transcribe → paste.
 ///
 /// One take at a time: `recording → transcribing → pasting → idle`. A new take can't start until the
 /// previous one has fully finished, including putting the user's clipboard back.
+///
+/// A finished take is saved to `PendingRecordings` before it is sent. It leaves the queue once it has
+/// been transcribed; if the cloud can't be reached (and local Whisper is off or fails), or the user
+/// cancels, it stays there for a manual retry from the menu.
 @MainActor @Observable
 final class AppController {
     enum Phase: Equatable {
@@ -37,6 +41,8 @@ final class AppController {
     private(set) var fnKeyFree = FnKey.isFreeForApps
 
     let settings = Settings()
+    let pendingRecordings = PendingRecordings()
+    let network = NetworkMonitor()
 
     @ObservationIgnored private let hotKey = HotKey()
     @ObservationIgnored private let fnKey = FnKey()
@@ -49,6 +55,8 @@ final class AppController {
     @ObservationIgnored private var pasteTarget: PasteTarget?
     @ObservationIgnored private var feedbackShown = false
     @ObservationIgnored private var fnGesture = FnGesture()
+    /// The transcription in flight, so the user can cancel it.
+    @ObservationIgnored private var job: Task<Void, Never>?
 
     /// Clips shorter than this are treated as accidental taps and never sent.
     private static let minimumClipDuration: TimeInterval = 0.3
@@ -64,7 +72,7 @@ final class AppController {
 
     var menuBarSymbol: String {
         switch phase {
-        case .idle: "waveform"
+        case .idle: pendingRecordings.items.isEmpty ? "waveform" : "tray.full"
         case .recording: "mic.fill"
         case .transcribing, .pasting: "ellipsis.circle"
         case .error: "exclamationmark.triangle"
@@ -77,6 +85,10 @@ final class AppController {
 
     func start() {
         AudioRecorder.removeLeftovers()
+        pendingRecordings.load()
+        network.onReconnect = { [weak self] in self?.announcePendingRecordings() }
+        network.start()
+        hud.onCancel = { [weak self] in self?.cancelTranscription() }
         hotKey.onPress = { [weak self] in self?.startRecording() }
         hotKey.onRelease = { [weak self] in self?.stopRecording() }
         fnKey.onPress = { [weak self] in self?.fnPressed() }
@@ -86,12 +98,13 @@ final class AppController {
         refreshPermissions()
         watchPermissions()
 
-        if settings.apiKey.isEmpty || !microphoneGranted || !accessibilityGranted {
+        if !settings.canTranscribe || !microphoneGranted || !accessibilityGranted {
             openSettings()
         }
     }
 
-    /// Called when the app quits: stop the microphone and delete any recording.
+    /// Called when the app quits: stop the microphone and delete an unfinished take. Saved
+    /// recordings stay in `PendingRecordings`.
     func shutdown() {
         cancelRecording()
         AudioRecorder.removeLeftovers()
@@ -183,7 +196,7 @@ final class AppController {
             // The third tap's own take keeps running; it just no longer needs the key.
             guard phase == .recording(.pushToTalk) else { return }
             phase = .recording(.handsFree)
-            if feedbackShown { hud.show(.handsFree) }
+            if feedbackShown { hud.show(.handsFree, note: offlineNote) }
         case .none:
             break
         }
@@ -196,8 +209,8 @@ final class AppController {
     private func startRecording() -> Bool {
         // Carbon may repeat "pressed" while the key is held; an unfinished take also blocks a new one.
         guard !isBusy else { return false }
-        guard !settings.apiKey.isEmpty else {
-            fail("Add your Groq API key in Settings.")
+        guard settings.canTranscribe else {
+            fail("Add your \(settings.provider.displayName) credentials in Settings.")
             openSettings()
             return false
         }
@@ -222,7 +235,7 @@ final class AppController {
             try? await Task.sleep(for: .seconds(delay))
             guard take == id, phase.isRecording else { return }
             feedbackShown = true
-            hud.show(phase == .recording(.handsFree) ? .handsFree : .recording)
+            hud.show(phase == .recording(.handsFree) ? .handsFree : .recording, note: offlineNote)
             playSound("Tink")
         }
     }
@@ -285,10 +298,19 @@ final class AppController {
             return
         }
 
-        phase = .transcribing
-        hud.show(.transcribing)
-        let target = pasteTarget
-        Task { await transcribe(clip, pasteInto: target) }
+        // Saved first, so nothing that happens during the upload can lose it. If saving fails, the
+        // take is still transcribed from its temporary file; it just can't wait for a retry.
+        let saved: PendingRecordings.Item?
+        do {
+            saved = try pendingRecordings.keep(clip)
+        } catch {
+            Self.log.error("could not save the take: \(error.localizedDescription, privacy: .public)")
+            saved = nil
+        }
+        let audio = Audio(
+            url: saved?.url ?? clip.url, duration: clip.duration, voicedDuration: clip.voicedDuration, saved: saved
+        )
+        begin(audio, delivery: .paste(pasteTarget))
     }
 
     /// Ends a take without sending anything: another key joined the trigger (it was a shortcut, not
@@ -306,28 +328,93 @@ final class AppController {
         hud.hide()
     }
 
-    private func transcribe(_ clip: Clip, pasteInto target: PasteTarget?) async {
-        defer { AudioRecorder.remove(clip.url) }
-        var text: String
+    // MARK: Transcription
+
+    /// A take on its way to text, either fresh or from the saved queue.
+    private struct Audio {
+        let url: URL
+        let duration: TimeInterval
+        let voicedDuration: TimeInterval
+        /// Nil when the take couldn't be saved; its temporary file is then deleted afterwards.
+        let saved: PendingRecordings.Item?
+    }
+
+    /// A fresh take is pasted where it started. A retry from the menu is copied instead: by then the
+    /// field it came from is long gone.
+    private enum Delivery {
+        case paste(PasteTarget?)
+        case copy
+    }
+
+    /// Why a take wasn't transcribed. In every case a saved recording stays in the queue.
+    private enum Stop: Error {
+        case cancelled, offline
+        case failed(String)
+    }
+
+    /// The second HUD line while recording offline, so you know at once what will happen to the take.
+    private var offlineNote: String? {
+        guard !network.isOnline else { return nil }
+        return settings.localWhisperEnabled ? "Offline · will transcribe on this Mac" : "Offline · will be saved for later"
+    }
+
+    /// Transcribes a saved recording again and copies the text.
+    func retry(_ item: PendingRecordings.Item) {
+        guard !isBusy, pendingRecordings.items.contains(item) else { return }
+        let audio = Audio(url: item.url, duration: item.duration, voicedDuration: item.voicedDuration, saved: item)
+        begin(audio, delivery: .copy)
+    }
+
+    /// Asks first: the audio is gone for good afterwards.
+    func delete(_ item: PendingRecordings.Item) {
+        let alert = NSAlert()
+        alert.messageText = "Delete this recording?"
+        alert.informativeText = "The audio is deleted permanently and can't be transcribed later."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn {
+            pendingRecordings.remove(item)
+        }
+    }
+
+    /// Stops the upload or the local run. The recording stays saved.
+    func cancelTranscription() {
+        guard phase == .transcribing, hud.style?.isCancellable == true else { return }
+        job?.cancel()
+    }
+
+    private func begin(_ audio: Audio, delivery: Delivery) {
+        take = UUID()
+        phase = .transcribing
+        job = Task { await transcribe(audio, delivery: delivery) }
+    }
+
+    private func transcribe(_ audio: Audio, delivery: Delivery) async {
         let vocabulary = Vocabulary(settings.vocabulary)
-        do {
-            let transcript = try await GroqClient(apiKey: settings.apiKey).transcribe(
-                fileURL: clip.url,
-                language: settings.language,
-                prompt: vocabulary.prompt
-            )
+        let result = await transcript(of: audio, vocabulary: vocabulary)
+        job = nil
+
+        var text: String
+        switch result {
+        case .failure(let stop):
+            if audio.saved == nil { AudioRecorder.remove(audio.url) }
+            fail(message(for: stop, saved: audio.saved != nil))
+            return
+        case .success(let transcript):
+            // Transcribed, even if to nothing: the audio has done its job.
+            if let saved = audio.saved { pendingRecordings.remove(saved) } else { AudioRecorder.remove(audio.url) }
             let invented = Hallucinations.isLikely(
-                transcript, prompt: vocabulary.prompt, voicedDuration: clip.voicedDuration
+                transcript, prompt: vocabulary.prompt, voicedDuration: audio.voicedDuration
             )
             text = invented ? "" : vocabulary.correct(transcript)
-        } catch {
-            fail(error.localizedDescription)
-            return
         }
 
         var cleanupWarning: String?
         let raw = text
-        if !text.isEmpty, settings.cleanupEnabled {
+        // Cleanup is a Groq request; offline or without a Groq key it's skipped, and the plain text goes out.
+        if !text.isEmpty, settings.cleanupEnabled, !settings.apiKey.isEmpty, network.isOnline {
             hud.show(.cleaningUp)
             (text, cleanupWarning) = await cleanUp(text, vocabulary: vocabulary)
         }
@@ -339,15 +426,99 @@ final class AppController {
         }
         lastTranscript = text
         lastRawTranscript = raw == text ? nil : raw
-        phase = .pasting
-        let outcome = await Paster.paste(text, into: target)
-        phase = .idle
-        if case .notPasted(let message) = outcome {
-            fail(message)
-        } else if let cleanupWarning {
-            // The dictation still arrived; say why it wasn't cleaned up rather than fail silently.
-            fail(cleanupWarning)
+
+        switch delivery {
+        case .copy:
+            Paster.copy(text)
+            phase = .idle
+            notify(["Copied. Press ⌘V to paste.", cleanupWarning].compactMap(\.self).joined(separator: " "))
+        case .paste(let target):
+            phase = .pasting
+            let outcome = await Paster.paste(text, into: target)
+            phase = .idle
+            if case .notPasted(let message) = outcome {
+                fail(message)
+            } else if let cleanupWarning {
+                // The dictation still arrived; say why it wasn't cleaned up rather than fail silently.
+                fail(cleanupWarning)
+            }
         }
+    }
+
+    /// The cloud first (unless we know we're offline), then local Whisper if the user turned it on.
+    private func transcript(of audio: Audio, vocabulary: Vocabulary) async -> Result<String, Stop> {
+        var stop = Stop.offline
+        if !settings.isProviderConfigured {
+            stop = .failed("Add your \(settings.provider.displayName) credentials in Settings.")
+        } else if network.isOnline {
+            do {
+                return .success(try await transcribeInCloud(audio, vocabulary: vocabulary))
+            } catch where Retry.isCancellation(error) {
+                return .failure(.cancelled)
+            } catch where Retry.isOffline(error) {
+                stop = .offline
+            } catch {
+                stop = .failed(error.localizedDescription)
+            }
+        }
+
+        guard settings.localWhisperEnabled else { return .failure(stop) }
+        hud.show(.transcribingLocally)
+        do {
+            let text = try await settings.localWhisper.transcribe(
+                fileURL: audio.url, duration: audio.duration, language: settings.language, prompt: vocabulary.prompt
+            )
+            return .success(text)
+        } catch where Retry.isCancellation(error) {
+            return .failure(.cancelled)
+        } catch {
+            Self.log.error("local transcription failed: \(error.localizedDescription, privacy: .public)")
+            return .failure(.failed(error.localizedDescription))
+        }
+    }
+
+    /// Sends the take to the chosen cloud, retrying failures that might pass. Every attempt shows in
+    /// the HUD with a Cancel button.
+    private func transcribeInCloud(_ audio: Audio, vocabulary: Vocabulary) async throws -> String {
+        let started = ContinuousClock.now
+        var attempt = 1
+        while true {
+            hud.show(.transcribing(attempt: attempt))
+            do {
+                switch settings.provider {
+                case .groq:
+                    return try await GroqClient(apiKey: settings.apiKey).transcribe(
+                        fileURL: audio.url, language: settings.language, prompt: vocabulary.prompt
+                    )
+                case .cloudflare:
+                    return try await settings.cloudflare.transcribe(
+                        fileURL: audio.url, language: settings.language, prompt: vocabulary.prompt
+                    )
+                }
+            } catch {
+                guard attempt < Retry.maximumAttempts, Retry.isTransient(error),
+                      ContinuousClock.now - started < Retry.budget else { throw error }
+                Self.log.notice("attempt \(attempt) failed, retrying: \(error.localizedDescription, privacy: .public)")
+                try await Task.sleep(for: Retry.delay(after: attempt))
+                attempt += 1
+            }
+        }
+    }
+
+    private func message(for stop: Stop, saved: Bool) -> String {
+        let reason = switch stop {
+        case .cancelled: "Cancelled."
+        case .offline: "You're offline."
+        case .failed(let message): message
+        }
+        return reason + (saved ? " The recording is saved in the Skryba menu." : " The recording couldn't be kept.")
+    }
+
+    /// After a reconnect, a gentle reminder that recordings are waiting. Nothing is sent by itself.
+    private func announcePendingRecordings() {
+        let count = pendingRecordings.items.count
+        guard count > 0, phase == .idle else { return }
+        notify("Back online. \(count == 1 ? "1 recording is" : "\(count) recordings are") waiting in the Skryba menu.")
     }
 
     /// Returns the cleaned-up text, or `text` unchanged plus a warning if cleanup fails or strays
@@ -369,6 +540,16 @@ final class AppController {
         } catch {
             Self.log.error("cleanup failed: \(error.localizedDescription, privacy: .public)")
             return (text, "AI cleanup skipped. \(error.localizedDescription)")
+        }
+    }
+
+    /// A short message that isn't an error; it doesn't block a new take.
+    private func notify(_ message: String) {
+        let style = RecordingHUD.Style.info(message)
+        hud.show(style)
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            if hud.style == style { hud.hide() }
         }
     }
 

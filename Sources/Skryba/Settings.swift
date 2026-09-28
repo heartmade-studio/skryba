@@ -1,11 +1,31 @@
 import Foundation
 import Observation
 
-/// User preferences. Everything lives in UserDefaults except the API key, which goes to the keychain.
+/// User preferences. Everything lives in UserDefaults except API credentials, which go to the keychain.
 @MainActor @Observable
 final class Settings {
     /// Mirrors the keychain; change it only through `saveAPIKey`.
     private(set) var apiKey: String
+    /// Mirrors the keychain; change it only through `saveCloudflareToken`.
+    private(set) var cloudflareToken: String
+    /// Which cloud turns speech into text. There is no chain between clouds: one is used.
+    var provider: TranscriptionProvider {
+        didSet { defaults.set(provider.rawValue, forKey: Key.provider) }
+    }
+    var cloudflareAccountID: String {
+        didSet { defaults.set(cloudflareAccountID, forKey: Key.cloudflareAccountID) }
+    }
+    /// Off by default. When on, whisper.cpp transcribes on this Mac if the cloud can't be reached.
+    var localWhisperEnabled: Bool {
+        didSet { defaults.set(localWhisperEnabled, forKey: Key.localWhisperEnabled) }
+    }
+    /// Empty means Homebrew's usual location.
+    var whisperExecutablePath: String {
+        didSet { defaults.set(whisperExecutablePath, forKey: Key.whisperExecutablePath) }
+    }
+    var whisperModelPath: String {
+        didSet { defaults.set(whisperModelPath, forKey: Key.whisperModelPath) }
+    }
     var trigger: Trigger {
         didSet { defaults.set(trigger.rawValue, forKey: Key.trigger) }
     }
@@ -37,6 +57,40 @@ final class Settings {
 
     @ObservationIgnored private let defaults = UserDefaults.standard
 
+    enum TranscriptionProvider: String, CaseIterable, Identifiable {
+        case groq, cloudflare
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .groq: "Groq"
+            case .cloudflare: "Cloudflare Workers AI"
+            }
+        }
+    }
+
+    /// The chosen cloud has the credentials it needs.
+    var isProviderConfigured: Bool {
+        switch provider {
+        case .groq: !apiKey.isEmpty
+        case .cloudflare: CloudflareClient.isValidAccountID(cloudflare.accountID) && !cloudflareToken.isEmpty
+        }
+    }
+
+    /// A take can be turned into text somehow, now or later.
+    var canTranscribe: Bool {
+        isProviderConfigured || localWhisperEnabled
+    }
+
+    var cloudflare: CloudflareClient {
+        CloudflareClient(accountID: cloudflareAccountID.trimmingCharacters(in: .whitespacesAndNewlines), apiToken: cloudflareToken)
+    }
+
+    var localWhisper: LocalWhisper {
+        LocalWhisper(executablePath: whisperExecutablePath, modelPath: whisperModelPath)
+    }
+
     /// What you hold to dictate.
     enum Trigger: String, CaseIterable {
         case fn, shortcut
@@ -62,19 +116,38 @@ final class Settings {
         static let cleanupEnabled = "cleanupEnabled"
         static let cleanupModel = "cleanupModel"
         static let replacements = "replacements"
+        static let provider = "provider"
+        static let cloudflareAccountID = "cloudflareAccountID"
+        static let localWhisperEnabled = "localWhisperEnabled"
+        static let whisperExecutablePath = "whisperExecutablePath"
+        static let whisperModelPath = "whisperModelPath"
     }
 
     /// Returns false if the keychain refused the write; the previous key then stays in place.
     func saveAPIKey(_ key: String) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard Keychain.save(trimmed) else { return false }
+        guard Keychain.save(trimmed, for: .groq) else { return false }
         apiKey = trimmed
+        return true
+    }
+
+    /// Returns false if the keychain refused the write; the previous token then stays in place.
+    func saveCloudflareToken(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Keychain.save(trimmed, for: .cloudflare) else { return false }
+        cloudflareToken = trimmed
         return true
     }
 
     init() {
         let defaults = UserDefaults.standard
-        apiKey = Keychain.read() ?? ""
+        apiKey = Keychain.read(.groq) ?? ""
+        cloudflareToken = Keychain.read(.cloudflare) ?? ""
+        provider = defaults.string(forKey: Key.provider).flatMap(TranscriptionProvider.init) ?? .groq
+        cloudflareAccountID = defaults.string(forKey: Key.cloudflareAccountID) ?? ""
+        localWhisperEnabled = defaults.bool(forKey: Key.localWhisperEnabled)
+        whisperExecutablePath = defaults.string(forKey: Key.whisperExecutablePath) ?? ""
+        whisperModelPath = defaults.string(forKey: Key.whisperModelPath) ?? ""
         trigger = defaults.string(forKey: Key.trigger).flatMap(Trigger.init) ?? .fn
         shortcut = defaults.data(forKey: Key.shortcut)
             .flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .default
