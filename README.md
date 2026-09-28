@@ -10,7 +10,7 @@ into the text field you were typing in. No internet? The take is kept, and you c
 later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-24 Swift files, about 3,100 lines including comments.
+24 Swift files, about 3,300 lines including comments.
 
 **Status: 1.3.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
@@ -110,8 +110,8 @@ SKRYBA_SIGN_IDENTITY="Your Identity Name" scripts/build.sh
 
 ## First launch
 
-Settings opens. Paste your Groq key (or pick Cloudflare and enter its account ID and token), click
-**Save**, and grant two permissions:
+Settings opens. Paste your Groq key (or pick Cloudflare, or local Whisper), click **Save**, check it
+with **Test**, and grant two permissions:
 
 - **Microphone**, to record while you hold the trigger.
 - **Accessibility**, to see the Fn key while other apps are in front and to send ⌘V. Without it,
@@ -183,19 +183,22 @@ Skryba never throws a dictation away because the network is gone.
 
 - **Offline when you start:** the HUD says *Offline · will be saved for later* (or *will transcribe
   on this Mac*) while you speak. Recording works as usual.
-- **A bad connection:** a stalled upload is retried up to three times, within about 40 seconds. The
-  HUD shows each attempt with a **Cancel** button; **Cancel transcription** in the menu does the
-  same. No network at all, or a rejected key, isn't retried.
+- **A bad connection:** all attempts share one deadline: 12 seconds for a short take, a little more
+  for a long one (12 s + 10% of its length). A hanging request is cut off at half of it, so there's
+  time for a retry. The HUD shows each attempt with a **Cancel** button; **Cancel transcription** in
+  the menu does the same. No network at all, or a rejected key, isn't retried. AI cleanup gets 8
+  seconds, then the plain transcript is pasted.
 - **What happens to the take:** if it can't be transcribed, or you cancel, it's saved. The menu-bar
   icon turns into a tray, and the menu lists saved recordings. **Transcribe and copy** puts the
   text on your clipboard (it isn't pasted: the field you dictated into is long gone). When the
   network comes back, a short notice reminds you. Nothing is sent by itself.
-- **Local Whisper (optional, off by default):** Settings → Offline. Install whisper.cpp
-  (`brew install whisper-cpp`), download a multilingual model from
-  [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp/tree/main), for example
-  `ggml-large-v3-turbo.bin` (1.6 GB, best for Polish) or `ggml-small.bin` (0.5 GB, faster), and
-  choose it in Settings. Skryba then transcribes on your Mac whenever the cloud is offline or fails.
-  AI cleanup is skipped while offline.
+- **Local Whisper (optional):** install whisper.cpp (`brew install whisper-cpp`), download a
+  multilingual model from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp/tree/main),
+  for example `ggml-large-v3-turbo.bin` (1.6 GB, best for Polish) or `ggml-small.bin` (0.5 GB,
+  faster), and choose it in Settings → Offline. Then either pick **Local Whisper** as the provider
+  (audio never leaves your Mac), or keep Groq or Cloudflare and turn local Whisper on as the
+  fallback for when the cloud is offline or fails. **Test** in Settings records a few seconds and
+  shows the text and how long it took. AI cleanup is skipped while offline.
 
 ## AI cleanup (optional, off by default)
 

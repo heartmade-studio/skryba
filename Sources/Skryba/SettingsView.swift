@@ -100,7 +100,15 @@ struct SettingsView: View {
                         """)
                     Link("Workers AI: get started", destination: URL(string: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/")!)
                         .font(.callout)
+                case .local:
+                    FootnoteText("""
+                        Audio never leaves this Mac. Choose whisper-cli and a model in the Offline tab. \
+                        With AI cleanup on, the text still goes to Groq.
+                        """)
+                    LocalWhisperStatus(problem: settings.localWhisper.setupProblem)
                 }
+                TestButton(controller: controller, provider: settings.provider)
+                    .id(settings.provider) // a result belongs to one provider
             }
 
             Section("Permissions") {
@@ -242,8 +250,10 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Transcribe on this Mac when the cloud can't be reached", isOn: $settings.localWhisperEnabled)
-                if settings.localWhisperEnabled {
+                if settings.provider != .local {
+                    Toggle("Transcribe on this Mac when the cloud can't be reached", isOn: $settings.localWhisperEnabled)
+                }
+                if showsLocalSetup {
                     TextField("whisper-cli", text: $settings.whisperExecutablePath, prompt: Text(LocalWhisper.defaultExecutablePaths[0]))
                     LabeledContent("Model") {
                         HStack {
@@ -252,28 +262,28 @@ struct SettingsView: View {
                             Button("Choose…") { chooseModel() }
                         }
                     }
-                    if let problem = settings.localWhisper.setupProblem {
-                        Label(problem.localizedDescription, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange).font(.callout)
-                    } else {
-                        Label("Ready. Audio stays on this Mac.", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green).font(.callout)
-                    }
+                    LocalWhisperStatus(problem: settings.localWhisper.setupProblem)
+                    TestButton(controller: controller, provider: .local)
                 }
             } header: {
-                Text("Local Whisper (optional)")
+                Text("Local Whisper")
             } footer: {
                 FootnoteText("""
                     Install whisper.cpp (brew install whisper-cpp) and download a multilingual model, \
                     e.g. ggml-large-v3-turbo.bin (1.6 GB, best for Polish) or ggml-small.bin (0.5 GB, \
-                    faster). Skryba uses it only when the cloud is offline or fails; it's slower than Groq.
+                    faster). Choose it as the provider, or as a fallback for when the cloud is offline or \
+                    fails. It's slower than Groq.
                     """)
             }
-            if settings.localWhisperEnabled {
+            if showsLocalSetup {
                 Link("whisper.cpp models on Hugging Face", destination: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/tree/main")!)
                     .font(.callout)
             }
         }
+    }
+
+    private var showsLocalSetup: Bool {
+        controller.settings.provider == .local || controller.settings.localWhisperEnabled
     }
 
     private var groqKeyField: some View {
@@ -304,6 +314,45 @@ extension SettingsView {
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url {
             controller.settings.whisperModelPath = url.path
+        }
+    }
+}
+
+private struct LocalWhisperStatus: View {
+    let problem: LocalWhisper.Failure?
+
+    var body: some View {
+        if let problem {
+            Label(problem.localizedDescription, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange).font(.callout)
+        } else {
+            Label("Ready. Audio stays on this Mac.", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green).font(.callout)
+        }
+    }
+}
+
+/// Records a few seconds and shows what the provider heard and how long it took.
+private struct TestButton: View {
+    let controller: AppController
+    let provider: Settings.TranscriptionProvider
+    @State private var result: String?
+    @State private var running = false
+
+    var body: some View {
+        LabeledContent {
+            Button(running ? "Listening…" : "Test") {
+                Task {
+                    running = true
+                    result = "Speak now…"
+                    result = await controller.testTranscription(with: provider)
+                    running = false
+                }
+            }
+            .disabled(running || controller.isTesting)
+        } label: {
+            Text("Test \(provider.displayName)")
+            Text(result ?? "Records \(Int(AppController.testDuration)) seconds, then shows the text and the time it took.")
         }
     }
 }

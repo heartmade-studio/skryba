@@ -67,6 +67,8 @@ final class AppController {
     /// shortcuts (Fn+⌫, Fn+↑) don't flash anything.
     private static let feedbackDelay: TimeInterval = 0.2
     private static let log = Logger(subsystem: "pl.heartmade.skryba", category: "dictation")
+    /// How long AI cleanup may take before the plain transcript is used instead.
+    private static let cleanupTimeout: Duration = .seconds(8)
     /// Hard cap on one take, in case the key-up is never seen.
     static let maximumRecordingDuration: TimeInterval = 5 * 60
 
@@ -80,12 +82,16 @@ final class AppController {
     }
 
     private var isBusy: Bool {
-        phase.isRecording || phase == .transcribing || phase == .pasting
+        phase.isRecording || phase == .transcribing || phase == .pasting || isTesting
     }
+
+    /// A Settings test is using the microphone.
+    private(set) var isTesting = false
 
     func start() {
         AudioRecorder.removeLeftovers()
         pendingRecordings.load()
+        deleteExpiredRecordingsHourly()
         network.onReconnect = { [weak self] in self?.announcePendingRecordings() }
         network.start()
         hud.onCancel = { [weak self] in self?.cancelTranscription() }
@@ -210,7 +216,7 @@ final class AppController {
         // Carbon may repeat "pressed" while the key is held; an unfinished take also blocks a new one.
         guard !isBusy else { return false }
         guard settings.canTranscribe else {
-            fail("Add your \(settings.provider.displayName) credentials in Settings.")
+            fail(settings.setupHint)
             openSettings()
             return false
         }
@@ -354,8 +360,8 @@ final class AppController {
 
     /// The second HUD line while recording offline, so you know at once what will happen to the take.
     private var offlineNote: String? {
-        guard !network.isOnline else { return nil }
-        return settings.localWhisperEnabled ? "Offline · will transcribe on this Mac" : "Offline · will be saved for later"
+        guard !network.isOnline, settings.provider != .local else { return nil }
+        return settings.usesLocalFallback ? "Offline · will transcribe on this Mac" : "Offline · will be saved for later"
     }
 
     /// Transcribes a saved recording again and copies the text.
@@ -445,24 +451,39 @@ final class AppController {
         }
     }
 
-    /// The cloud first (unless we know we're offline), then local Whisper if the user turned it on.
+    /// Local Whisper when it's the provider. Otherwise the cloud first (unless we know we're offline),
+    /// then local Whisper if the user turned it on as a fallback.
     private func transcript(of audio: Audio, vocabulary: Vocabulary) async -> Result<String, Stop> {
+        let provider = settings.provider
+        if provider == .local {
+            return await transcribeLocally(audio, vocabulary: vocabulary)
+        }
+
         var stop = Stop.offline
         if !settings.isProviderConfigured {
-            stop = .failed("Add your \(settings.provider.displayName) credentials in Settings.")
+            stop = .failed(settings.setupHint)
         } else if network.isOnline {
             do {
-                return .success(try await transcribeInCloud(audio, vocabulary: vocabulary))
+                return .success(try await Retry.attempts(
+                    within: Retry.deadline(forClipOf: audio.duration),
+                    onAttempt: { hud.show(.transcribing(attempt: $0)) },
+                    operation: cloudTranscription(of: audio.url, with: provider, vocabulary: vocabulary)
+                ))
             } catch where Retry.isCancellation(error) {
                 return .failure(.cancelled)
             } catch where Retry.isOffline(error) {
                 stop = .offline
             } catch {
+                Self.log.notice("cloud transcription failed: \(error.localizedDescription, privacy: .public)")
                 stop = .failed(error.localizedDescription)
             }
         }
 
-        guard settings.localWhisperEnabled else { return .failure(stop) }
+        guard settings.usesLocalFallback else { return .failure(stop) }
+        return await transcribeLocally(audio, vocabulary: vocabulary)
+    }
+
+    private func transcribeLocally(_ audio: Audio, vocabulary: Vocabulary) async -> Result<String, Stop> {
         hud.show(.transcribingLocally)
         do {
             let text = try await settings.localWhisper.transcribe(
@@ -477,30 +498,20 @@ final class AppController {
         }
     }
 
-    /// Sends the take to the chosen cloud, retrying failures that might pass. Every attempt shows in
-    /// the HUD with a Cancel button.
-    private func transcribeInCloud(_ audio: Audio, vocabulary: Vocabulary) async throws -> String {
-        let started = ContinuousClock.now
-        var attempt = 1
-        while true {
-            hud.show(.transcribing(attempt: attempt))
-            do {
-                switch settings.provider {
-                case .groq:
-                    return try await GroqClient(apiKey: settings.apiKey).transcribe(
-                        fileURL: audio.url, language: settings.language, prompt: vocabulary.prompt
-                    )
-                case .cloudflare:
-                    return try await settings.cloudflare.transcribe(
-                        fileURL: audio.url, language: settings.language, prompt: vocabulary.prompt
-                    )
-                }
-            } catch {
-                guard attempt < Retry.maximumAttempts, Retry.isTransient(error),
-                      ContinuousClock.now - started < Retry.budget else { throw error }
-                Self.log.notice("attempt \(attempt) failed, retrying: \(error.localizedDescription, privacy: .public)")
-                try await Task.sleep(for: Retry.delay(after: attempt))
-                attempt += 1
+    /// One request to a cloud provider, with everything it needs captured up front, so it can run
+    /// (and be retried or cancelled) away from the main actor.
+    private func cloudTranscription(
+        of file: URL, with provider: Settings.TranscriptionProvider, vocabulary: Vocabulary
+    ) -> @Sendable () async throws -> String {
+        let language = settings.language
+        let prompt = vocabulary.prompt
+        let groq = GroqClient(apiKey: settings.apiKey)
+        let cloudflare = settings.cloudflare
+        return {
+            switch provider {
+            case .groq: try await groq.transcribe(fileURL: file, language: language, prompt: prompt)
+            case .cloudflare: try await cloudflare.transcribe(fileURL: file, language: language, prompt: prompt)
+            case .local: preconditionFailure("local Whisper is not a cloud provider")
             }
         }
     }
@@ -513,6 +524,52 @@ final class AppController {
         }
         return reason + (saved ? " The recording is saved in the Skryba menu." : " The recording couldn't be kept.")
     }
+
+    private func deleteExpiredRecordingsHourly() {
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60 * 60))
+                self?.pendingRecordings.deleteExpired()
+            }
+        }
+    }
+
+    // MARK: Settings test
+
+    /// Records a few seconds and transcribes them with one provider, without fallback or saving, to
+    /// check a setup. Returns what to show in Settings, including how long the provider took.
+    func testTranscription(with provider: Settings.TranscriptionProvider) async -> String {
+        guard !isBusy else { return "Finish the current dictation first." }
+        isTesting = true
+        defer { isTesting = false }
+        do {
+            try recorder.start()
+        } catch {
+            return "Microphone unavailable: \(error.localizedDescription)"
+        }
+        try? await Task.sleep(for: .seconds(Self.testDuration))
+        guard let clip = recorder.stop() else { return "The recording failed." }
+        defer { AudioRecorder.remove(clip.url) }
+
+        let vocabulary = Vocabulary(settings.vocabulary)
+        let started = ContinuousClock.now
+        do {
+            let text = provider == .local
+                ? try await settings.localWhisper.transcribe(
+                    fileURL: clip.url, duration: clip.duration, language: settings.language, prompt: vocabulary.prompt
+                )
+                : try await Retry.attempts(
+                    within: Retry.deadline(forClipOf: clip.duration),
+                    operation: cloudTranscription(of: clip.url, with: provider, vocabulary: vocabulary)
+                )
+            let seconds = (ContinuousClock.now - started).formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1)))
+            return text.isEmpty ? "Heard nothing (\(seconds)). Speak while it listens." : "“\(text)” · \(seconds)"
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    static let testDuration: TimeInterval = 4
 
     /// After a reconnect, a gentle reminder that recordings are waiting. Nothing is sent by itself.
     private func announcePendingRecordings() {
@@ -528,7 +585,12 @@ final class AppController {
         let replacements = Replacements(settings.replacements)
         let cleanup = TextCleanup(client: GroqClient(apiKey: settings.apiKey), model: settings.cleanupModel)
         do {
-            let reply = try await cleanup.clean(text, replacements: replacements, language: settings.language)
+            // Optional, so it gets little patience: past the limit the plain transcript goes out.
+            let language = settings.language
+            let reply = try await Retry.run(
+                { try await cleanup.clean(text, replacements: replacements, language: language) },
+                until: .now + Self.cleanupTimeout
+            )
             // Judge exactly the text that would be pasted.
             let cleaned = vocabulary.correct(reply)
             guard TextCleanup.isAllowed(original: text, cleaned: cleaned, replacements: replacements) else {

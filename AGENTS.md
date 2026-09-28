@@ -36,10 +36,11 @@ stay small, readable, and well commented.
   manual retry from the menu; nothing is re-sent by itself. The queue stays private, out of backups,
   and expires after `PendingRecordings.maximumAge`. A cancelled recording (as opposed to a cancelled
   transcription), a too-short or a silent take is deleted.
-- One cloud provider at a time (`Settings.provider`: Groq or Cloudflare); no cloud-to-cloud chain.
-  Local Whisper is opt-in, runs only when the cloud is offline or failed, and starts `whisper-cli`
-  directly (argv, never a shell). Every wait on the network or on whisper-cli must be visible in
-  the HUD and cancellable (`cancelTranscription`); retries follow `Retry`.
+- Keep the product simple: one provider (`Settings.provider`: Groq, Cloudflare or local Whisper),
+  plus local Whisper as an opt-in fallback for the cloud ones. No primary/fallback matrix, no
+  cloud-to-cloud chain. `whisper-cli` starts directly (argv, never a shell). Every wait on the
+  network or on whisper-cli must be visible in the HUD and cancellable (`cancelTranscription`).
+  All cloud attempts share one deadline (`Retry.attempts`); never give a request its own long timeout.
 - Retries from the menu copy the transcript to the clipboard; only a fresh take pastes.
 - AI cleanup is optional, and it only removes hesitations and applies the user's `Replacements`. It
   must never lose a dictation: on any error, or a reply that changed anything else

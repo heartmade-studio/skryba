@@ -1,18 +1,69 @@
 import Foundation
 
-/// How hard to try the cloud before giving up and keeping the recording for later.
+/// How hard to try the cloud before moving on: to local Whisper if it's on, else to the saved queue.
 ///
-/// Some failures are worth another attempt (a stalled upload, a busy server), others never get
-/// better by repeating (no network at all, a rejected key). Each attempt is shown in the HUD and
-/// can be cancelled, so a bad connection never feels like a hang.
+/// All attempts share one deadline, so after releasing the key you are back to a usable app quickly,
+/// even on a stalled connection. One attempt may take at most half of it, so a hanging request still
+/// leaves time for another. Some failures are worth another attempt (a stalled upload, a busy
+/// server); others never get better by repeating (no network at all, a rejected key).
 enum Retry {
     static let maximumAttempts = 3
-    /// No new attempt starts after this much time; the user shouldn't wait longer than about a minute.
-    static let budget: Duration = .seconds(40)
+
+    /// Groq usually answers a short take in under a second. 12 seconds covers a slow network with room
+    /// for a retry; a long take gets more, since its upload is bigger.
+    static func deadline(forClipOf duration: TimeInterval) -> Duration {
+        .seconds(12 + 0.1 * duration)
+    }
 
     /// The pause before attempt `attempt + 1`.
     static func delay(after attempt: Int) -> Duration {
-        .seconds(attempt == 1 ? 1 : 3)
+        .milliseconds(attempt == 1 ? 500 : 1000)
+    }
+
+    struct TimedOut: LocalizedError {
+        var errorDescription: String? { "The provider didn't answer in time." }
+    }
+
+    /// Runs `operation` until it succeeds, up to `maximumAttempts` times, all within `deadline`.
+    /// `onAttempt` reports each attempt as it starts (for the HUD).
+    @MainActor
+    static func attempts<T: Sendable>(
+        within deadline: Duration,
+        onAttempt: (Int) -> Void = { _ in },
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let clock = ContinuousClock()
+        let end = clock.now + deadline
+        var attempt = 1
+        while true {
+            onAttempt(attempt)
+            do {
+                return try await run(operation, until: min(end, clock.now + deadline / 2))
+            } catch {
+                // Another attempt only if it could still get a fair share of the time.
+                let next = clock.now + delay(after: attempt)
+                guard attempt < maximumAttempts, isTransient(error) || error is TimedOut,
+                      end - next >= deadline / 4 else { throw error }
+                try await Task.sleep(until: next, clock: clock)
+                attempt += 1
+            }
+        }
+    }
+
+    /// Runs `operation`, cancelling it at `limit`. A request that keeps trickling bytes never hits
+    /// URLSession's own timeout (it measures idle time), so this is the one that counts.
+    static func run<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T, until limit: ContinuousClock.Instant
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(until: limit, clock: .continuous)
+                throw TimedOut()
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
     }
 
     /// There is no network path at all: don't retry, go straight to the fallback.

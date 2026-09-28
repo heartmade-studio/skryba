@@ -8,14 +8,16 @@ final class Settings {
     private(set) var apiKey: String
     /// Mirrors the keychain; change it only through `saveCloudflareToken`.
     private(set) var cloudflareToken: String
-    /// Which cloud turns speech into text. There is no chain between clouds: one is used.
+    /// What turns speech into text. There is no chain between providers: one is used, plus local
+    /// Whisper as an optional fallback for the cloud ones.
     var provider: TranscriptionProvider {
         didSet { defaults.set(provider.rawValue, forKey: Key.provider) }
     }
     var cloudflareAccountID: String {
         didSet { defaults.set(cloudflareAccountID, forKey: Key.cloudflareAccountID) }
     }
-    /// Off by default. When on, whisper.cpp transcribes on this Mac if the cloud can't be reached.
+    /// Off by default. When on, whisper.cpp transcribes on this Mac if a cloud provider can't be
+    /// reached. Irrelevant when local Whisper is the provider.
     var localWhisperEnabled: Bool {
         didSet { defaults.set(localWhisperEnabled, forKey: Key.localWhisperEnabled) }
     }
@@ -59,6 +61,8 @@ final class Settings {
 
     enum TranscriptionProvider: String, CaseIterable, Identifiable {
         case groq, cloudflare
+        /// whisper.cpp on this Mac: audio never leaves it.
+        case local
 
         var id: String { rawValue }
 
@@ -66,21 +70,35 @@ final class Settings {
             switch self {
             case .groq: "Groq"
             case .cloudflare: "Cloudflare Workers AI"
+            case .local: "Local Whisper (this Mac)"
             }
         }
     }
 
-    /// The chosen cloud has the credentials it needs.
+    /// The chosen provider has what it needs: credentials, or whisper-cli and a model.
     var isProviderConfigured: Bool {
         switch provider {
         case .groq: !apiKey.isEmpty
         case .cloudflare: CloudflareClient.isValidAccountID(cloudflare.accountID) && !cloudflareToken.isEmpty
+        case .local: localWhisper.setupProblem == nil
         }
+    }
+
+    /// Local Whisper steps in for a cloud provider that can't be reached.
+    var usesLocalFallback: Bool {
+        provider != .local && localWhisperEnabled
     }
 
     /// A take can be turned into text somehow, now or later.
     var canTranscribe: Bool {
-        isProviderConfigured || localWhisperEnabled
+        isProviderConfigured || usesLocalFallback
+    }
+
+    /// What to tell the user when the provider isn't set up.
+    var setupHint: String {
+        provider == .local
+            ? "Choose whisper-cli and a model in Settings → Offline."
+            : "Add your \(provider.displayName) credentials in Settings."
     }
 
     var cloudflare: CloudflareClient {
