@@ -27,6 +27,66 @@ struct RetryTests {
         #expect(Retry.isCancellation(URLError(.cancelled)))
         #expect(!Retry.isCancellation(URLError(.timedOut)))
     }
+
+    @Test func aShortTakeGetsAboutTwelveSeconds() {
+        #expect(Retry.deadline(forClipOf: 5) == .seconds(12.5))
+        #expect(Retry.deadline(forClipOf: 300) == .seconds(42))
+    }
+}
+
+/// Timed: the whole cloud attempt, retries included, must end by its deadline, whatever the network does.
+@MainActor
+struct RetryDeadlineTests {
+    /// A request that never answers, like an upload on a captive Wi-Fi.
+    private static let stalled: @Sendable () async throws -> String = {
+        try await Task.sleep(for: .seconds(60))
+        return "late"
+    }
+
+    @Test func aStalledRequestGivesUpAtTheDeadline() async {
+        let started = ContinuousClock.now
+        await #expect(throws: Retry.TimedOut.self) {
+            try await Retry.attempts(within: .milliseconds(600), operation: Self.stalled)
+        }
+        #expect(ContinuousClock.now - started < .milliseconds(900))
+    }
+
+    @Test func aStalledFirstAttemptLeavesTimeForASecond() async throws {
+        var attempts = 0
+        let started = ContinuousClock.now
+        let text = try await Retry.attempts(within: .seconds(3), onAttempt: { attempts = $0 }) {
+            // Only the first request hangs; it's cut off at half the deadline.
+            if ContinuousClock.now - started < .seconds(1) { try await Task.sleep(for: .seconds(60)) }
+            return "text"
+        }
+        #expect(text == "text")
+        #expect(attempts == 2)
+        #expect(ContinuousClock.now - started < .seconds(3))
+    }
+
+    @Test func aRejectedKeyIsTriedOnce() async {
+        var attempts = 0
+        await #expect(throws: SkrybaError.self) {
+            try await Retry.attempts(within: .seconds(5), onAttempt: { attempts = $0 }) { () async throws -> String in
+                throw SkrybaError.api(provider: "Groq", status: 401, message: "")
+            }
+        }
+        #expect(attempts == 1)
+    }
+
+    @Test func cancellingStopsAStalledRequestAtOnce() async {
+        let task = Task { try await Retry.attempts(within: .seconds(30), operation: Self.stalled) }
+        try? await Task.sleep(for: .milliseconds(100))
+        let cancelled = ContinuousClock.now
+        task.cancel()
+        let result = await task.result
+        #expect(ContinuousClock.now - cancelled < .milliseconds(300))
+        if case .failure(let error) = result {
+            #expect(Retry.isCancellation(error))
+        } else {
+            Issue.record("a cancelled request returned text")
+        }
+    }
 }
 
 @MainActor
@@ -75,6 +135,16 @@ struct PendingRecordingsTests {
         queue.load()
         #expect(queue.items.map(\.id) == [recent.id])
         #expect(!FileManager.default.fileExists(atPath: old.url.path))
+    }
+
+    @Test func recordingsExpireWhileTheAppKeepsRunning() throws {
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let queue = PendingRecordings(directory: directory)
+        let item = try queue.keep(clip())
+
+        queue.deleteExpired(now: .now.addingTimeInterval(PendingRecordings.maximumAge + 60))
+        #expect(queue.items.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: item.url.path))
     }
 
     @Test func audioWithoutItsDetailsIsStillRecovered() throws {

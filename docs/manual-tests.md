@@ -76,7 +76,8 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
       *Transcribing…* with **Cancel**, then *Connection trouble · attempt 2 of 3…*. Click **Cancel**
       in the HUD: the focus stays in your app, and the recording is saved. Repeat with **Cancel
       transcription** in the menu.
-- [ ] With a stalled connection and no cancel, it gives up within about a minute and saves the take.
+- [ ] With a stalled connection and no cancel, a short take gives up within about 12 s and is saved
+      (or goes to local Whisper, when that's the fallback).
 - [ ] Hold Fn and stay silent or just cough (voice under 0.8 s). Nothing is saved to the menu.
 - [ ] Quit Skryba with a saved recording, relaunch: it is still listed and not sent.
 
@@ -87,6 +88,10 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] A wrong Cloudflare token shows "Cloudflare rejected the credentials…" and saves the take.
 - [ ] With Cloudflare chosen and AI cleanup on without a Groq key, the Cleanup tab asks for a Groq
       key, and dictation still pastes the plain text.
+- [ ] **Test** in Settings → General, for each provider: speak for 4 s; it shows your words and the
+      time taken. Write down the Groq and Cloudflare times for a short and a long sentence.
+- [ ] Choose **Local Whisper** as the provider with Wi-Fi on: the log shows no network request,
+      and the HUD says *Transcribing on this Mac…*.
 - [ ] Enable Settings → Offline → local Whisper, choose a model: it says "Ready". With Wi-Fi off,
       dictate: the HUD says *Offline · will transcribe on this Mac*, then *Transcribing on this
       Mac…*, and the text is pasted.

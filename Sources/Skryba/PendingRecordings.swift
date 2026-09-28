@@ -6,7 +6,7 @@ import os
 /// so a dictation is never lost. The user transcribes or deletes them from the menu.
 ///
 /// The folder is private (0700), left out of Time Machine backups, and anything older than
-/// `maximumAge` is deleted at launch: voice recordings shouldn't pile up unnoticed.
+/// `maximumAge` is deleted (at launch, then hourly): voice recordings shouldn't pile up unnoticed.
 @MainActor @Observable
 final class PendingRecordings {
     struct Item: Identifiable, Equatable {
@@ -57,29 +57,35 @@ final class PendingRecordings {
 
     /// Reads the queue from disk and deletes recordings older than `maximumAge`.
     func load(now: Date = .now) {
+        items = Self.read(from: directory, now: now)
+        deleteExpired(now: now)
+    }
+
+    /// Deletes recordings older than `maximumAge`. Skryba may run for weeks, so this runs hourly too.
+    func deleteExpired(now: Date = .now) {
+        for item in items where now.timeIntervalSince(item.createdAt) > Self.maximumAge {
+            remove(item)
+            Self.log.notice("deleted an expired recording")
+        }
+    }
+
+    private static func read(from directory: URL, now: Date) -> [Item] {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.creationDateKey])) ?? []
         var loaded: [Item] = []
         for url in files where url.pathExtension == "m4a" {
             guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { continue }
-            let metadata = (try? Data(contentsOf: metadataURL(for: id)))
+            let metadata = (try? Data(contentsOf: metadataURL(for: id, in: directory)))
                 .flatMap { try? JSONDecoder().decode(Metadata.self, from: $0) }
             let created = metadata?.createdAt
                 ?? (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
                 ?? now
             // Unknown voice length: assume plenty, so the hallucination filter doesn't drop real speech.
-            let item = Item(
+            loaded.append(Item(
                 id: id, url: url, createdAt: created,
                 duration: metadata?.duration ?? 0, voicedDuration: metadata?.voicedDuration ?? .infinity
-            )
-            if now.timeIntervalSince(created) > Self.maximumAge {
-                AudioRecorder.remove(url)
-                AudioRecorder.remove(metadataURL(for: id))
-                Self.log.notice("deleted an expired recording")
-            } else {
-                loaded.append(item)
-            }
+            ))
         }
-        items = loaded.sorted { $0.createdAt < $1.createdAt }
+        return loaded.sorted { $0.createdAt < $1.createdAt }
     }
 
     private func prepareDirectory() throws {
@@ -93,6 +99,10 @@ final class PendingRecordings {
     }
 
     private func metadataURL(for id: UUID) -> URL {
+        Self.metadataURL(for: id, in: directory)
+    }
+
+    private static func metadataURL(for id: UUID, in directory: URL) -> URL {
         directory.appendingPathComponent("\(id.uuidString).json")
     }
 
