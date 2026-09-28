@@ -57,6 +57,8 @@ final class AppController {
     @ObservationIgnored private var fnGesture = FnGesture()
     /// The transcription in flight, so the user can cancel it.
     @ObservationIgnored private var job: Task<Void, Never>?
+    /// The AI cleanup in flight, so the user can skip it.
+    @ObservationIgnored private var cleanupTask: Task<String, Error>?
 
     /// Clips shorter than this are treated as accidental taps and never sent.
     private static let minimumClipDuration: TimeInterval = 0.3
@@ -67,8 +69,11 @@ final class AppController {
     /// shortcuts (Fn+⌫, Fn+↑) don't flash anything.
     private static let feedbackDelay: TimeInterval = 0.2
     private static let log = Logger(subsystem: "pl.heartmade.skryba", category: "dictation")
-    /// How long AI cleanup may take before the plain transcript is used instead.
-    private static let cleanupTimeout: Duration = .seconds(8)
+    /// How long AI cleanup may take before the plain transcript is used instead. Thinking models need
+    /// ~15 s for a short dictation (Gemma on Cloudflare), more for a long one; the HUD offers Skip.
+    static func cleanupDeadline(for text: String) -> Duration {
+        .seconds(30 + Double(text.count) / 20)
+    }
     /// Hard cap on one take, in case the key-up is never seen.
     static let maximumRecordingDuration: TimeInterval = 5 * 60
 
@@ -386,9 +391,10 @@ final class AppController {
     }
 
     /// Stops the upload or the local run. The recording stays saved.
+    /// During AI cleanup it skips only the cleanup: the plain transcript still goes out.
     func cancelTranscription() {
         guard phase == .transcribing, hud.style?.isCancellable == true else { return }
-        job?.cancel()
+        if let cleanupTask { cleanupTask.cancel() } else { job?.cancel() }
     }
 
     private func begin(_ audio: Audio, delivery: Delivery) {
@@ -419,10 +425,12 @@ final class AppController {
 
         var cleanupWarning: String?
         let raw = text
-        // Cleanup is a Groq request; offline or without a Groq key it's skipped, and the plain text goes out.
-        if !text.isEmpty, settings.cleanupEnabled, !settings.apiKey.isEmpty, network.isOnline {
+        // Cleanup runs at the provider that transcribes. With local Whisper, offline, or without
+        // credentials it's skipped, and the plain text goes out.
+        if !text.isEmpty, settings.cleanupEnabled, let model = settings.cleanupModel,
+           settings.isProviderConfigured, network.isOnline {
             hud.show(.cleaningUp)
-            (text, cleanupWarning) = await cleanUp(text, vocabulary: vocabulary)
+            (text, cleanupWarning) = await cleanUp(text, model: model, vocabulary: vocabulary)
         }
 
         hud.hide()
@@ -580,17 +588,24 @@ final class AppController {
 
     /// Returns the cleaned-up text, or `text` unchanged plus a warning if cleanup fails or strays
     /// from it. The dictation itself must never be lost to this optional step.
-    private func cleanUp(_ text: String, vocabulary: Vocabulary) async -> (text: String, warning: String?) {
+    private func cleanUp(_ text: String, model: TextCleanup.Model, vocabulary: Vocabulary) async -> (text: String, warning: String?) {
         // One snapshot of the rules, so a change in Settings during the request can't mix them.
         let replacements = Replacements(settings.replacements)
-        let cleanup = TextCleanup(client: GroqClient(apiKey: settings.apiKey), model: settings.cleanupModel)
+        // Every cleanup model runs at Groq or Cloudflare.
+        let client: any ChatClient = model.provider == .groq ? GroqClient(apiKey: settings.apiKey) : settings.cloudflare
+        let cleanup = TextCleanup(client: client, model: model)
         do {
             // Optional, so it gets little patience: past the limit the plain transcript goes out.
             let language = settings.language
-            let reply = try await Retry.run(
-                { try await cleanup.clean(text, replacements: replacements, language: language) },
-                until: .now + Self.cleanupTimeout
-            )
+            let task = Task {
+                try await Retry.run(
+                    { try await cleanup.clean(text, replacements: replacements, language: language) },
+                    until: .now + Self.cleanupDeadline(for: text)
+                )
+            }
+            cleanupTask = task
+            defer { cleanupTask = nil }
+            let reply = try await task.value
             // Judge exactly the text that would be pasted.
             let cleaned = vocabulary.correct(reply)
             guard TextCleanup.isAllowed(original: text, cleaned: cleaned, replacements: replacements) else {
@@ -599,6 +614,9 @@ final class AppController {
                 return (text, TextCleanup.rejectionMessage)
             }
             return (cleaned, nil)
+        } catch where Retry.isCancellation(error) {
+            Self.log.notice("cleanup skipped by the user")
+            return (text, nil)
         } catch {
             Self.log.error("cleanup failed: \(error.localizedDescription, privacy: .public)")
             return (text, "AI cleanup skipped. \(error.localizedDescription)")

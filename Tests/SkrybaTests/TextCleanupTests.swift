@@ -81,9 +81,9 @@ struct TextCleanupGuardTests {
     }
 }
 
-struct GroqReplyTests {
+struct ChatReplyTests {
     private func reply(_ json: String) throws -> String {
-        try GroqClient.replyText(from: Data(json.utf8))
+        try ChatRequest.replyText(from: Data(json.utf8))
     }
 
     @Test func returnsACompleteReply() throws {
@@ -95,5 +95,25 @@ struct GroqReplyTests {
         #expect(throws: SkrybaError.self) {
             try reply(#"{"choices":[{"message":{"content":"Przygotuj dokument i"},"finish_reason":"length"}]}"#)
         }
+    }
+}
+
+struct CleanupModelTests {
+    @Test func eachProviderOffersOnlyItsOwnModels() {
+        #expect(TextCleanup.Model.models(for: .groq) == [.gptOss, .qwen])
+        #expect(TextCleanup.Model.models(for: .cloudflare) == [.cloudflareGptOss, .gemma, .mistral])
+        #expect(TextCleanup.Model.models(for: .local).isEmpty)
+    }
+
+    @Test func everyModelThatCanThinkDoes() throws {
+        func json(_ model: TextCleanup.Model) throws -> String {
+            String(decoding: try model.request(system: "s", user: "u", maxTokens: 100).encoded(), as: UTF8.self)
+        }
+        #expect(try json(.gptOss).contains(#""include_reasoning":false"#))
+        #expect(try json(.cloudflareGptOss).contains(#""reasoning_effort":"medium""#))
+        #expect(try !json(.cloudflareGptOss).contains("include_reasoning")) // Groq-only field
+        #expect(try json(.gemma).contains(#""chat_template_kwargs":{"enable_thinking":true}"#))
+        #expect(try json(.qwen).contains(#""reasoning_effort":"default""#))
+        #expect(try !json(.mistral).contains("reasoning"))
     }
 }

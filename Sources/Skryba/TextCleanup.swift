@@ -1,55 +1,81 @@
 import Foundation
 
-/// Optional second pass: a Groq chat model removes hesitations ("yyy", "eee") and applies the user's
-/// `Replacements` ("claude md" → "CLAUDE.md"). Nothing else.
+/// Optional second pass: a chat model removes hesitations ("yyy", "eee") and applies the user's
+/// `Replacements` ("claude md" → "CLAUDE.md"). Nothing else. It runs at the provider that transcribes.
 ///
 /// A language model can still misbehave: answer a dictated question, reword it, or drop a word.
 /// `isAllowed` checks that the reply made only those two kinds of change, and any failure falls back
 /// to the plain transcript, so cleanup can make dictation better but never lose it.
 struct TextCleanup {
     enum Model: String, CaseIterable, Identifiable {
+        // Groq
         case gptOss = "openai/gpt-oss-120b"
         case qwen = "qwen/qwen3.8-27b"
+        // Cloudflare Workers AI
+        case cloudflareGptOss = "@cf/openai/gpt-oss-120b"
+        case gemma = "@cf/google/gemma-4-26b-a4b-it"
+        case mistral = "@cf/mistralai/mistral-small-3.1-24b-instruct"
 
         var id: String { rawValue }
 
         var displayName: String {
             switch self {
-            case .gptOss: "GPT-OSS 120B"
+            case .gptOss, .cloudflareGptOss: "GPT-OSS 120B"
             case .qwen: "Qwen 3.8 27B (preview)"
+            case .gemma: "Gemma 4 26B"
+            case .mistral: "Mistral Small 3.1 24B"
             }
         }
 
-        /// Both are reasoning models. Proofreading needs little thought, so keep it minimal for speed.
-        var reasoningEffort: String {
+        /// Where the model runs. Local Whisper has no cleanup: its text stays on this Mac.
+        var provider: Settings.TranscriptionProvider {
             switch self {
-            case .gptOss: "low" // its lowest setting
-            case .qwen: "none"
+            case .gptOss, .qwen: .groq
+            case .cloudflareGptOss, .gemma, .mistral: .cloudflare
             }
         }
 
-        /// Keep the reasoning out of the reply; only the corrected text is wanted.
-        var includeReasoning: Bool? {
+        static func models(for provider: Settings.TranscriptionProvider) -> [Model] {
+            allCases.filter { $0.provider == provider }
+        }
+
+        /// The request for one transcript. Reasoning stays on: it catches replacements that Whisper
+        /// misspelled ("klod md"), which the models miss without it. Quality over speed here.
+        func request(system: String, user: String, maxTokens: Int) -> ChatRequest {
+            var request = ChatRequest(
+                model: rawValue,
+                messages: [.init(role: "system", content: system), .init(role: "user", content: user)],
+                temperature: 0.2,
+                maxCompletionTokens: maxTokens
+            )
             switch self {
-            case .gptOss: false
-            case .qwen: nil // nothing to hide with reasoning off
+            case .gptOss:
+                request.reasoningEffort = "medium" // "low" missed misspelled replacements in tests
+                request.includeReasoning = false // only the corrected text is wanted
+            case .qwen:
+                request.reasoningEffort = "default"
+                request.includeReasoning = false
+            case .cloudflareGptOss:
+                request.reasoningEffort = "medium" // Cloudflare returns the reasoning in its own field
+            case .gemma:
+                request.chatTemplateKwargs = ["enable_thinking": true]
+            case .mistral:
+                break // not a reasoning model
             }
+            return request
         }
     }
 
-    let client: GroqClient
+    let client: any ChatClient
     let model: Model
 
     func clean(_ text: String, replacements: Replacements, language: String) async throws -> String {
-        let reply = try await client.chat(
-            model: model.rawValue,
+        let reply = try await client.chat(model.request(
             system: Self.systemPrompt(replacements: replacements, language: language),
             user: Self.userMessage(text),
-            reasoningEffort: model.reasoningEffort,
-            includeReasoning: model.includeReasoning,
-            // Room for the text plus the model's (hidden) reasoning.
-            maxTokens: min(16_384, 1_024 + text.count)
-        )
+            // Room for the text plus the model's (hidden) reasoning, which can take ~700 tokens.
+            maxTokens: min(16_384, 4_096 + text.count)
+        ))
         return Self.unwrap(reply)
     }
 

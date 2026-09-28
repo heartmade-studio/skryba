@@ -49,8 +49,12 @@ final class Settings {
     var cleanupEnabled: Bool {
         didSet { defaults.set(cleanupEnabled, forKey: Key.cleanupEnabled) }
     }
-    var cleanupModel: TextCleanup.Model {
-        didSet { defaults.set(cleanupModel.rawValue, forKey: Key.cleanupModel) }
+    /// The cleanup model is chosen per provider, so switching providers keeps each choice.
+    var groqCleanupModel: TextCleanup.Model {
+        didSet { defaults.set(groqCleanupModel.rawValue, forKey: Key.cleanupModel) }
+    }
+    var cloudflareCleanupModel: TextCleanup.Model {
+        didSet { defaults.set(cloudflareCleanupModel.rawValue, forKey: Key.cloudflareCleanupModel) }
     }
     /// Rewrite rules for AI cleanup, one per line; see `Replacements`.
     var replacements: String {
@@ -94,6 +98,16 @@ final class Settings {
         isProviderConfigured || usesLocalFallback
     }
 
+    /// AI cleanup runs at the provider that transcribes, so the text goes nowhere the audio didn't.
+    /// None for local Whisper: its text stays on this Mac.
+    var cleanupModel: TextCleanup.Model? {
+        switch provider {
+        case .groq: groqCleanupModel
+        case .cloudflare: cloudflareCleanupModel
+        case .local: nil
+        }
+    }
+
     /// What to tell the user when the provider isn't set up.
     var setupHint: String {
         provider == .local
@@ -132,7 +146,8 @@ final class Settings {
         static let vocabulary = "vocabulary"
         static let playSounds = "playSounds"
         static let cleanupEnabled = "cleanupEnabled"
-        static let cleanupModel = "cleanupModel"
+        static let cleanupModel = "cleanupModel" // Groq's; the name predates Cloudflare
+        static let cloudflareCleanupModel = "cloudflareCleanupModel"
         static let replacements = "replacements"
         static let provider = "provider"
         static let cloudflareAccountID = "cloudflareAccountID"
@@ -173,8 +188,15 @@ final class Settings {
         vocabulary = defaults.string(forKey: Key.vocabulary) ?? ""
         playSounds = defaults.object(forKey: Key.playSounds) as? Bool ?? true
         cleanupEnabled = defaults.bool(forKey: Key.cleanupEnabled)
-        cleanupModel = defaults.string(forKey: Key.cleanupModel).flatMap(TextCleanup.Model.init) ?? .gptOss
+        groqCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cleanupModel), or: .gptOss)
+        cloudflareCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cloudflareCleanupModel), or: .cloudflareGptOss)
         replacements = defaults.string(forKey: Key.replacements) ?? ""
+    }
+
+    /// The saved model if it still exists and runs where `fallback` does; otherwise `fallback`.
+    /// GPT-OSS is the default on both providers: the model tested most on real dictations.
+    private static func cleanupModel(_ saved: String?, or fallback: TextCleanup.Model) -> TextCleanup.Model {
+        saved.flatMap(TextCleanup.Model.init).flatMap { $0.provider == fallback.provider ? $0 : nil } ?? fallback
     }
 
     /// Defaults to the Mac's language when Skryba lists it; otherwise lets Whisper detect it.

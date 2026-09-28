@@ -5,8 +5,8 @@ import SwiftUI
 /// A small pill near the bottom of the screen showing what Skryba is doing.
 ///
 /// It is a non-activating panel: it never takes focus, so ⌘V still lands in the app you were typing in.
-/// While a transcription can be cancelled it accepts clicks on its Cancel button, still without
-/// activating Skryba.
+/// While a transcription can be cancelled, or AI cleanup skipped, it accepts clicks on its button,
+/// still without activating Skryba.
 @MainActor
 final class RecordingHUD {
     enum Style: Equatable {
@@ -19,7 +19,7 @@ final class RecordingHUD {
 
         var isCancellable: Bool {
             switch self {
-            case .transcribing, .transcribingLocally: true
+            case .transcribing, .transcribingLocally, .cleaningUp: true
             default: false
             }
         }
@@ -113,8 +113,8 @@ private struct HUDView: View {
         .fixedSize()
     }
 
-    private var cancelButton: some View {
-        Button("Cancel") { model.onCancel() }
+    private func cancelButton(_ title: String = "Cancel") -> some View {
+        Button(title) { model.onCancel() }
             .buttonStyle(.plain)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
@@ -138,13 +138,13 @@ private struct HUDView: View {
                 .controlSize(.small)
                 .tint(.white)
             Text(attempt == 1 ? "Transcribing…" : "Connection trouble · attempt \(attempt) of \(Retry.maximumAttempts)…")
-            cancelButton
+            cancelButton()
         case .transcribingLocally:
             ProgressView()
                 .controlSize(.small)
                 .tint(.white)
             Text("Transcribing on this Mac…")
-            cancelButton
+            cancelButton()
         case .info(let message):
             Image(systemName: "tray.full.fill")
                 .foregroundStyle(.orange)
@@ -156,6 +156,7 @@ private struct HUDView: View {
                 .controlSize(.small)
                 .tint(.white)
             Text("Cleaning up…")
+            cancelButton("Skip") // pastes the plain transcript
         case .error(let message):
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)

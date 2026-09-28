@@ -172,6 +172,13 @@ struct CloudflareTests {
         #expect(throws: SkrybaError.self) { try CloudflareClient.text(from: reply) }
     }
 
+    @Test func readsErrorsInBothFormats() {
+        let workersAI = Data(#"{"success":false,"errors":[{"code":7003,"message":"No route"}]}"#.utf8)
+        let openAI = Data(#"{"error":{"message":"Unknown model"}}"#.utf8)
+        #expect(CloudflareClient.errorMessage(in: workersAI, status: 400) == "No route")
+        #expect(CloudflareClient.errorMessage(in: openAI, status: 400) == "Unknown model")
+    }
+
     @Test func accountIDsAreThirtyTwoHexCharacters() {
         #expect(CloudflareClient.isValidAccountID("0123456789abcdef0123456789ABCDEF"))
         #expect(!CloudflareClient.isValidAccountID("0123456789abcdef"))

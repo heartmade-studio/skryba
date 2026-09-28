@@ -3,7 +3,7 @@ import os
 
 /// Minimal client for Groq's OpenAI-compatible API: speech-to-text, and chat for the optional cleanup.
 /// Docs: https://console.groq.com/docs/speech-to-text, https://console.groq.com/docs/text-chat
-struct GroqClient {
+struct GroqClient: ChatClient {
     static let transcriptionEndpoint = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
     static let chatEndpoint = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
     static let model = "whisper-large-v3-turbo"
@@ -43,39 +43,16 @@ struct GroqClient {
         return try Self.decoder.decode(Transcription.self, from: data).speechText
     }
 
-    /// One system + user exchange with a chat model; returns the reply text.
-    func chat(
-        model: String, system: String, user: String,
-        reasoningEffort: String?, includeReasoning: Bool?, maxTokens: Int
-    ) async throws -> String {
-        let request = ChatRequest(
-            model: model,
-            messages: [.init(role: "system", content: system), .init(role: "user", content: user)],
-            temperature: 0.2,
-            maxCompletionTokens: maxTokens,
-            reasoningEffort: reasoningEffort,
-            includeReasoning: includeReasoning
-        )
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
+    /// One chat completion; returns the reply text.
+    func chat(_ request: ChatRequest) async throws -> String {
         let data = try await send(
             to: Self.chatEndpoint,
             contentType: "application/json",
-            body: try encoder.encode(request),
-            timeout: 15,
-            label: "chat \(model)"
+            body: try request.encoded(),
+            timeout: ChatRequest.timeout,
+            label: "chat \(request.model)"
         )
-        return try Self.replyText(from: data)
-    }
-
-    /// The reply of a chat completion. A reply that didn't end on its own ("length": it hit the token
-    /// limit) is cut off, so it throws rather than returning half a text.
-    static func replyText(from data: Data) throws -> String {
-        guard let choice = try decoder.decode(ChatResponse.self, from: data).choices.first else { return "" }
-        if let reason = choice.finishReason, reason != "stop" {
-            throw SkrybaError.incompleteReply(reason: reason)
-        }
-        return choice.message.content ?? ""
+        return try ChatRequest.replyText(from: data)
     }
 
     private func send(to url: URL, contentType: String, body: Data, timeout: TimeInterval, label: String) async throws -> Data {
@@ -103,29 +80,6 @@ struct GroqClient {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return decoder
-    }
-
-    private struct ChatRequest: Encodable {
-        struct Message: Encodable {
-            let role: String
-            let content: String
-        }
-        let model: String
-        let messages: [Message]
-        let temperature: Double
-        let maxCompletionTokens: Int
-        // Optional reasoning controls; omitted from the JSON when nil.
-        let reasoningEffort: String?
-        let includeReasoning: Bool?
-    }
-
-    private struct ChatResponse: Decodable {
-        struct Choice: Decodable {
-            struct Message: Decodable { let content: String? }
-            let message: Message
-            let finishReason: String?
-        }
-        let choices: [Choice]
     }
 
     private struct Transcription: Decodable {

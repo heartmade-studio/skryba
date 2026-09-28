@@ -43,6 +43,13 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Dictate "no to wyślij to jutro". "no" stays: only hesitations are removed.
 - [ ] The log shows `groq chat openai/gpt-oss-120b` with a timing and no `cleanup failed` line.
       Repeat with Qwen.
+- [ ] Switch the provider to Cloudflare: the Model picker lists GPT-OSS 120B, Gemma 4 26B and
+      Mistral Small 3.1 24B. Repeat the dictations above with each; the log shows
+      `cloudflare chat @cf/…` with a timing. Switch back to Groq: its earlier choice is kept.
+- [ ] With Gemma on Cloudflare, click **Skip** while the HUD shows *Cleaning up…*: the plain
+      transcript is pasted at once, with no warning, and the log says `cleanup skipped by the user`.
+- [ ] Switch the provider to Local Whisper: the Cleanup tab shows no picker and says cleanup needs
+      Groq or Cloudflare. A dictation pastes the plain text, with no chat request in the log.
 
 ## Safety
 
@@ -86,8 +93,7 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Choose Cloudflare, enter the account ID and a Workers AI token, Save. Dictate a Polish
       sentence: it is pasted. The log shows `cloudflare transcription` with a timing.
 - [ ] A wrong Cloudflare token shows "Cloudflare rejected the credentials…" and saves the take.
-- [ ] With Cloudflare chosen and AI cleanup on without a Groq key, the Cleanup tab asks for a Groq
-      key, and dictation still pastes the plain text.
+- [ ] With Cloudflare chosen and AI cleanup on, no Groq key is needed: cleanup goes to Cloudflare.
 - [ ] **Test** in Settings → General, for each provider: speak for 4 s; it shows your words and the
       time taken. Write down the Groq and Cloudflare times for a short and a long sentence.
 - [ ] Choose **Local Whisper** as the provider with Wi-Fi on: the log shows no network request,

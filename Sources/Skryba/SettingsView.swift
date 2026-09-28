@@ -96,14 +96,14 @@ struct SettingsView: View {
                     )
                     FootnoteText("""
                         Create a token with the Workers AI permission. Cloudflare runs the same Whisper \
-                        model; audio goes to your Cloudflare account instead of Groq.
+                        model; audio, and text for AI cleanup, go to your Cloudflare account instead of Groq.
                         """)
-                    Link("Workers AI: get started", destination: URL(string: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/")!)
+                    Link("Get a free Workers AI token at dash.cloudflare.com", destination: URL(string: "https://dash.cloudflare.com/profile/api-tokens")!)
                         .font(.callout)
                 case .local:
                     FootnoteText("""
-                        Audio never leaves this Mac. Choose whisper-cli and a model in the Offline tab. \
-                        With AI cleanup on, the text still goes to Groq.
+                        Audio and text never leave this Mac, so AI cleanup is off. Choose whisper-cli and a \
+                        model in the Offline tab.
                         """)
                     LocalWhisperStatus(problem: settings.localWhisper.setupProblem)
                 }
@@ -196,28 +196,24 @@ struct SettingsView: View {
         return Form {
             Section {
                 Toggle("Remove hesitations and apply replacements", isOn: $settings.cleanupEnabled)
-                if settings.cleanupEnabled, settings.apiKey.isEmpty {
-                    // Cleanup always uses Groq, even when Cloudflare transcribes.
-                    groqKeyField
+                if settings.cleanupEnabled {
+                    switch settings.provider {
+                    case .groq:
+                        Picker("Model", selection: $settings.groqCleanupModel) { modelOptions(for: .groq) }
+                    case .cloudflare:
+                        Picker("Model", selection: $settings.cloudflareCleanupModel) { modelOptions(for: .cloudflare) }
+                    case .local:
+                        EmptyView()
+                    }
+                    if settings.provider != .local, !settings.isProviderConfigured {
+                        FootnoteText(settings.setupHint)
+                    }
                 }
             } footer: {
-                FootnoteText("""
-                    A Groq language model removes hesitations like “yyy” and “eee”, and applies your \
-                    replacements. It changes nothing else; if it does, the plain transcript is pasted. It's a \
-                    second request per dictation, so it's a little slower and costs a little: roughly \
-                    $0.20 per 1,000 dictations with GPT-OSS, $0.80 with Qwen.
-                    """)
+                FootnoteText(cleanupFootnote)
             }
 
             if settings.cleanupEnabled {
-                Section {
-                    Picker("Model", selection: $settings.cleanupModel) {
-                        ForEach(TextCleanup.Model.allCases) { model in
-                            Text(model.displayName).tag(model)
-                        }
-                    }
-                }
-
                 Section {
                     TextEditor(text: $settings.replacements)
                         .font(.callout.monospaced())
@@ -284,6 +280,31 @@ struct SettingsView: View {
 
     private var showsLocalSetup: Bool {
         controller.settings.provider == .local || controller.settings.localWhisperEnabled
+    }
+
+    private func modelOptions(for provider: Settings.TranscriptionProvider) -> some View {
+        ForEach(TextCleanup.Model.models(for: provider)) { Text($0.displayName).tag($0) }
+    }
+
+    /// Cleanup runs at the transcription provider, so the footnote says which one, and what it costs there.
+    private var cleanupFootnote: String {
+        let settings = controller.settings
+        let what = """
+            removes hesitations like “yyy” and “eee”, and applies your replacements. It changes nothing \
+            else; if it does, the plain transcript is pasted. It's a second request per dictation, so it's \
+            a little slower
+            """
+        switch settings.provider {
+        case .groq:
+            return "A Groq language model \(what) and costs a little: roughly $0.40 per 1,000 dictations with GPT-OSS, $0.80 with Qwen."
+        case .cloudflare:
+            return """
+                A Cloudflare Workers AI language model \(what). The free daily allocation covers about 250 \
+                dictations with GPT-OSS, 500 with Gemma and 1,000 with Mistral, which doesn't think first.
+                """
+        case .local:
+            return "AI cleanup needs Groq or Cloudflare as the provider. With local Whisper, nothing leaves this Mac."
+        }
     }
 
     private var groqKeyField: some View {

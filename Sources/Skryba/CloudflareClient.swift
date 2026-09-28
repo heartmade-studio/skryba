@@ -1,9 +1,9 @@
 import Foundation
 import os
 
-/// Speech-to-text through Cloudflare Workers AI, an alternative to Groq with the same Whisper model.
+/// Cloudflare Workers AI, an alternative to Groq: the same Whisper model, and chat models for AI cleanup.
 /// Docs: https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/
-struct CloudflareClient {
+struct CloudflareClient: ChatClient {
     static let model = "@cf/openai/whisper-large-v3-turbo"
 
     let accountID: String
@@ -19,10 +19,6 @@ struct CloudflareClient {
     }
 
     func transcribe(fileURL: URL, language: String, prompt: String) async throws -> String {
-        guard Self.isValidAccountID(accountID) else {
-            throw SkrybaError.api(provider: "Cloudflare", status: 0, message: "The account ID is invalid.")
-        }
-        let url = URL(string: "https://api.cloudflare.com/client/v4/accounts/\(accountID)/ai/run/\(Self.model)")!
         let body = Request(
             audio: try Data(contentsOf: fileURL).base64EncodedString(),
             language: language.isEmpty ? nil : language,
@@ -30,23 +26,42 @@ struct CloudflareClient {
         )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try await post(path: "ai/run/\(Self.model)", body: try encoder.encode(body), timeout: 30, label: "transcription")
+        return try Self.text(from: data)
+    }
 
-        var request = URLRequest(url: url)
+    /// One chat completion, for AI cleanup. Workers AI takes the OpenAI format at `ai/v1`.
+    /// Docs: https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/
+    func chat(_ request: ChatRequest) async throws -> String {
+        let data = try await post(path: "ai/v1/chat/completions", body: try request.encoded(), timeout: ChatRequest.timeout, label: "chat \(request.model)")
+        return try ChatRequest.replyText(from: data)
+    }
+
+    private func post(path: String, body: Data, timeout: TimeInterval, label: String) async throws -> Data {
+        guard Self.isValidAccountID(accountID) else {
+            throw SkrybaError.api(provider: "Cloudflare", status: 0, message: "The account ID is invalid.")
+        }
+        var request = URLRequest(url: URL(string: "https://api.cloudflare.com/client/v4/accounts/\(accountID)/\(path)")!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 30
+        request.timeoutInterval = timeout
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let started = ContinuousClock.now
-        let (data, response) = try await Self.session.upload(for: request, from: try encoder.encode(body))
-        Self.log.info("cloudflare transcription: \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
+        let (data, response) = try await Self.session.upload(for: request, from: body)
+        Self.log.info("cloudflare \(label, privacy: .public): \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
-            let message = (try? JSONDecoder().decode(Envelope.self, from: data))?.errors?.first?.message
-                ?? HTTPURLResponse.localizedString(forStatusCode: status)
-            throw SkrybaError.api(provider: "Cloudflare", status: status, message: message)
+            throw SkrybaError.api(provider: "Cloudflare", status: status, message: Self.errorMessage(in: data, status: status))
         }
-        return try Self.text(from: data)
+        return data
+    }
+
+    /// Workers AI replies with `{"errors": [{"message": …}]}`; the OpenAI endpoint may use `{"error": {"message": …}}`.
+    static func errorMessage(in data: Data, status: Int) -> String {
+        (try? JSONDecoder().decode(Envelope.self, from: data))?.errors?.first?.message
+            ?? (try? JSONDecoder().decode(OpenAIError.self, from: data))?.error.message
+            ?? HTTPURLResponse.localizedString(forStatusCode: status)
     }
 
     /// The transcript from a Workers AI reply: `{"success": true, "result": {"text": "…"}}`.
@@ -72,5 +87,10 @@ struct CloudflareClient {
         let success: Bool
         let result: Result?
         let errors: [Message]?
+    }
+
+    private struct OpenAIError: Decodable {
+        struct Body: Decodable { let message: String }
+        let error: Body
     }
 }

@@ -12,7 +12,7 @@ into the text field you were typing in. No internet? The take is kept, and you c
 later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-24 Swift files, about 3,300 lines including comments.
+25 Swift files, about 3,400 lines including comments.
 
 **Status: 1.4.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
@@ -40,7 +40,7 @@ release      ──► discard if the level meter heard no voice
              ──► Groq or Cloudflare (whisper-large-v3-turbo); visible, cancellable retries
                  offline or failed? whisper.cpp on this Mac if enabled, else keep it for later
              ──► drop text Whisper invents on near-silence, fix vocabulary near misses
-             ──► optional: AI cleanup of hesitations and your replacements (Groq chat model)
+             ──► optional: AI cleanup of hesitations and your replacements (a chat model at the same provider)
              ──► same app, window and field in focus? clipboard ← text, ⌘V, clipboard restored
 ```
 
@@ -52,12 +52,13 @@ release      ──► discard if the level meter heard no voice
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
-| `CloudflareClient.swift` | The same Whisper model through Cloudflare Workers AI, as an alternative to Groq. |
+| `CloudflareClient.swift` | The same Whisper model through Cloudflare Workers AI, as an alternative to Groq, plus its chat models for AI cleanup. |
+| `ChatCompletion.swift` | The OpenAI-style chat request that both providers accept, for AI cleanup. |
 | `LocalWhisper.swift` | Optional offline transcription: converts the take to WAV with AVFoundation and runs `whisper-cli` directly (no shell). Cancelling or a timeout stops it. |
 | `PendingRecordings.swift` | Takes not transcribed yet: a private folder, left out of backups, emptied after 7 days. |
 | `NetworkMonitor.swift` | Knows when the Mac has no network, so the HUD says "Offline" as soon as you start. |
 | `Retry.swift` | Which failures are worth another attempt (a stalled upload, a busy server) and which aren't (no network, a rejected key). |
-| `TextCleanup.swift` | Optional AI cleanup: a fixed prompt, model settings, and a guard that pastes the raw transcript unless the reply only removed hesitations and applied your replacements. |
+| `TextCleanup.swift` | Optional AI cleanup: a fixed prompt, the models per provider, and a guard that pastes the raw transcript unless the reply only removed hesitations and applied your replacements. |
 | `Replacements.swift` | Your rewrite rules for AI cleanup, one per line: "claude md → CLAUDE.md". |
 | `Hallucinations.swift` | Drops stock phrases ("Thanks for watching") and prompt echoes, but only from clips with under 0.8 s of voice. |
 | `Vocabulary.swift` | Your list of names, used as Whisper's prompt and to fix near misses afterwards ("Hrtmade" → "Heartmade"), keeping Polish case endings. |
@@ -172,7 +173,7 @@ Skryba has no servers, accounts, analytics or telemetry. It talks to the provide
 
 - **What leaves your Mac:** the audio of each take, plus your vocabulary list (sent as Whisper's
   prompt), to that one provider. With AI cleanup on, the transcript and your replacements also go
-  to a Groq chat model, whichever provider transcribes. If you put client names in the vocabulary,
+  to a chat model at that same provider. If you put client names in the vocabulary,
   the provider receives them with every request. Read
   [Groq's privacy policy](https://groq.com/privacy-policy/) or Cloudflare's if that matters for
   your use. Local Whisper sends nothing anywhere.
@@ -202,8 +203,8 @@ Skryba never throws a dictation away because the network is gone.
 - **A bad connection:** all attempts share one deadline: 12 seconds for a short take, a little more
   for a long one (12 s + 10% of its length). A hanging request is cut off at half of it, so there's
   time for a retry. The HUD shows each attempt with a **Cancel** button; **Cancel transcription** in
-  the menu does the same. No network at all, or a rejected key, isn't retried. AI cleanup gets 8
-  seconds, then the plain transcript is pasted.
+  the menu does the same. No network at all, or a rejected key, isn't retried. AI cleanup gets 30
+  seconds plus a little per word, then the plain transcript is pasted; **Skip** pastes it at once.
 - **What happens to the take:** if it can't be transcribed, or you cancel, it's saved. The menu-bar
   icon turns into a tray, and the menu lists saved recordings. **Transcribe and copy** puts the
   text on your clipboard (it isn't pasted: the field you dictated into is long gone). When the
@@ -219,8 +220,17 @@ Skryba never throws a dictation away because the network is gone.
 ## AI cleanup (optional, off by default)
 
 Whisper transcribes what it hears, including "yyy" and "eee". Turn on **Settings → AI cleanup** to
-pass each transcript through a Groq chat model: `openai/gpt-oss-120b` by default, or
-`qwen/qwen3.8-27b` (preview). It does two things only:
+pass each transcript through a chat model at the provider that transcribes, so the text goes
+nowhere the audio didn't:
+
+- **Groq:** `openai/gpt-oss-120b` by default, or `qwen/qwen3.8-27b` (preview).
+- **Cloudflare:** `@cf/openai/gpt-oss-120b` by default, `@cf/google/gemma-4-26b-a4b-it` or
+  `@cf/mistralai/mistral-small-3.1-24b-instruct`.
+- **Local Whisper:** no cleanup. Nothing leaves your Mac.
+
+Each provider remembers its own choice. Every model that can reason does so before answering
+(Mistral can't): in tests, GPT-OSS on its lowest setting missed misspelled replacements like
+"klod md". Quality comes before speed here. Cleanup does two things only:
 
 - **Removes hesitations** such as "yyy", "eee", "hmm".
 - **Applies your replacements.** One rule per line in **Replacements**, as you say it → as it should
@@ -230,8 +240,10 @@ pass each transcript through a Groq chat model: `openai/gpt-oss-120b` by default
 Everything else stays as Whisper wrote it: no rewording, no fixed words, no removed filler words
 like "no" or "tego".
 
-- **It's a second request**, so dictation takes a little longer. The HUD shows *Cleaning up…*
-  while it runs, and request timings are logged (see Troubleshooting).
+- **It's a second request**, so dictation takes longer: about 1–2 s on Groq, 7 s with GPT-OSS
+  and 15 s with Gemma on Cloudflare (short dictations, September 2026). The HUD shows
+  *Cleaning up…* with a **Skip** button that pastes the plain transcript, and request timings are
+  logged (see Troubleshooting).
 - **It can't lose your dictation.** A language model may answer a dictated question, reword it or
   drop a word. Skryba compares the reply with the transcript word by word, ignoring punctuation and
   case. Unless the only differences are removed hesitations and replacements that sound like one of
@@ -249,10 +261,15 @@ $0.11.
 Cloudflare lists the same model at $0.000513 per audio minute ($0.03 per hour), and its Workers
 free allocation covers light use. Local Whisper costs nothing but your Mac's time.
 
-AI cleanup adds token costs: $0.15/$0.60 per million input/output tokens for GPT-OSS 120B, and
-$0.80/$4.00 for Qwen 3.8 27B. A short dictation is at most about 450 tokens in
-and 200 out, which comes to about $0.20 per 1,000 dictations with GPT-OSS and $0.80 with Qwen.
-These are estimates; your Groq dashboard shows the real numbers.
+AI cleanup adds token costs. On Groq: $0.15/$0.60 per million input/output tokens for GPT-OSS
+120B, and $0.80/$4.00 for Qwen 3.8 27B. A short dictation is at most about 450 tokens in and 200
+out, plus up to about 500 tokens of reasoning, which comes to about $0.40 per 1,000 dictations
+with GPT-OSS and $0.80 with Qwen.
+
+On Cloudflare, a short dictation used about 40 neurons with GPT-OSS, 20 with Gemma and 10 with
+Mistral (September 2026), so the free 10,000 neurons a day cover roughly 250, 500 and 1,000
+dictations. Long dictations and a long replacement list use more. These are estimates; your Groq or
+Cloudflare dashboard shows the real numbers.
 
 ## Troubleshooting
 
