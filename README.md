@@ -10,7 +10,7 @@ the text field you were typing in.
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
 19 Swift files, about 2,500 lines including comments.
 
-**Status: 1.2.2.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
+**Status: 1.3.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
 
 ## How it works
