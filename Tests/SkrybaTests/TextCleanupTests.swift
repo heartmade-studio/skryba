@@ -2,126 +2,82 @@ import Foundation
 import Testing
 @testable import Skryba
 
-struct TextCleanupTests {
-    @Test func acceptsPunctuationAndSmallFixes() {
-        #expect(TextCleanup.isFaithful(
-            original: "no to może zrobimy to jutro rano",
-            cleaned: "No to może zrobimy to jutro rano.", language: "pl"
-        ))
-        #expect(TextCleanup.isFaithful(
-            original: "chciałbym z twórz nowy plik w heartmade",
-            cleaned: "Chciałbym stworzyć nowy plik w Heartmade.", language: "pl"
-        ))
-    }
+struct ReplacementsTests {
+    @Test func parsesOneRulePerLine() {
+        let replacements = Replacements("""
+            claude md → CLAUDE.md
 
-    @Test func acceptsRemovedFillersAndFalseStarts() {
-        #expect(TextCleanup.isFaithful(original: "yyy eee yyy tak", cleaned: "Tak.", language: "pl"))
-        #expect(TextCleanup.isFaithful(
-            original: "wyślij to do do Ani nie do Kasi",
-            cleaned: "Wyślij to do Kasi.", language: "pl"
-        ))
+            pawel małpa heartmade pl -> pawel@heartmade.pl
+            no arrow here
+             → nothing said
+            """)
+        #expect(replacements.rules == [
+            .init(spoken: "claude md", written: "CLAUDE.md"),
+            .init(spoken: "pawel małpa heartmade pl", written: "pawel@heartmade.pl"),
+        ])
     }
+}
 
-    @Test func rejectsAnswersSummariesAndAdditions() {
-        // The model answered the dictated question instead of correcting it.
-        #expect(!TextCleanup.isFaithful(original: "jaka jest stolica Francji", cleaned: "Stolicą Francji jest Paryż.", language: "pl"))
-        #expect(!TextCleanup.isFaithful(
-            original: "napisz maila do klienta że spotkanie jest przesunięte",
-            cleaned: "Oto mail: Szanowny Panie, uprzejmie informuję, że nasze spotkanie zostało przesunięte na inny termin.", language: "pl"
-        ))
-        #expect(!TextCleanup.isFaithful(original: "dzień dobry wszystkim", cleaned: "", language: "pl"))
-    }
-
-    @Test func systemPromptCarriesTagsAndVocabulary() {
-        let prompt = TextCleanup.systemPrompt(
-            instructions: "Popraw tekst.", vocabulary: Vocabulary("Heartmade, Skryba"), language: "pl"
-        )
-        #expect(prompt.hasPrefix("Popraw tekst."))
+struct TextCleanupPromptTests {
+    @Test func carriesTagsAndRules() {
+        let prompt = TextCleanup.systemPrompt(replacements: Replacements("claude md → CLAUDE.md"), language: "pl")
         #expect(prompt.contains("<transcript>"))
-        #expect(prompt.contains("Heartmade, Skryba."))
+        #expect(prompt.contains("- claude md → CLAUDE.md"))
 
-        let bare = TextCleanup.systemPrompt(instructions: "Fix it.", vocabulary: Vocabulary(""), language: "en")
-        #expect(!bare.contains("frequent terms"))
+        let bare = TextCleanup.systemPrompt(replacements: Replacements(""), language: "en")
+        #expect(bare.hasPrefix("You edit"))
+        #expect(!bare.contains("Replacement list"))
     }
 
     @Test func unwrapsTaggedReplies() {
         #expect(TextCleanup.unwrap("<transcript>\nDzień dobry.\n</transcript>\n") == "Dzień dobry.")
         #expect(TextCleanup.unwrap("  Dzień dobry.  ") == "Dzień dobry.")
     }
-
-    @Test func defaultInstructionsFollowTheLanguage() {
-        #expect(TextCleanup.defaultInstructions(language: "pl").hasPrefix("Jesteś korektorem"))
-        #expect(TextCleanup.defaultInstructions(language: "en").hasPrefix("You proofread"))
-        #expect(TextCleanup.defaultInstructions(language: "").hasPrefix("You proofread"))
-    }
 }
 
-struct TextCleanupFillerTests {
-    /// The case from a real dictation: spoken fillers removed by the model must pass the guard.
-    @Test func acceptsRemovedPolishFillerWords() {
-        #expect(TextCleanup.isFaithful(
-            original: "Zobaczę w ogóle, ile to użyję tych, no, tych, no, tokenów.",
-            cleaned: "Zobaczę w ogóle, ile zużyję tokenów.", language: "pl"
-        ))
-    }
-}
+struct TextCleanupGuardTests {
+    let replacements = Replacements("""
+        claude md → CLAUDE.md
+        pawel małpa heartmade pl → pawel@heartmade.pl
+        """)
 
-struct TextCleanupInsertionTests {
-    let vocabulary = Vocabulary("Heartmade,Hermes,Groq,Heartman,Paweł Jurewicz")
-
-    /// The case from a real dictation: a vocabulary term appeared where nothing was said.
-    @Test func catchesAnInsertedVocabularyTerm() {
-        #expect(TextCleanup.insertsVocabulary(
-            original: "To jest pierwszy tekst. Materializacja pałacu w Himalajach.",
-            cleaned: "To jest pierwszy tekst. Heartmade, Materializacja pałacu w Himalajach.",
-            vocabulary: vocabulary,
-            language: "pl"
-        ))
+    private func allowed(_ original: String, _ cleaned: String) -> Bool {
+        TextCleanup.isAllowed(original: original, cleaned: cleaned, replacements: replacements)
     }
 
-    @Test func allowsFixingAMisheardTerm() {
-        #expect(!TextCleanup.insertsVocabulary(
-            original: "pracuję w hartmejd od lat",
-            cleaned: "Pracuję w Heartmade od lat.",
-            vocabulary: vocabulary,
-            language: "pl"
-        ))
-        #expect(!TextCleanup.insertsVocabulary(
-            original: "yyy no pracuję w Heartmade",
-            cleaned: "Pracuję w Heartmade.",
-            vocabulary: vocabulary,
-            language: "pl"
-        ))
+    @Test func allowsRemovedHesitationsPunctuationAndCase() {
+        #expect(allowed("yyy no więc jutro eee jadę do warszawy", "No więc jutro jadę do Warszawy."))
+        #expect(allowed("Hrm, hrm, co ja tam jeszcze mam?", "Co ja tam jeszcze mam?"))
+        #expect(allowed("zolty samochod", "Żółty samochód."))
+        // A real GPT-OSS reply that left the hesitations in.
+        #expect(allowed("Hrm, hrm, co ja tam mam?", "Hrm, hrm, co ja tam mam?"))
     }
 
-    @Test func insertedWordsFindsOnlyAdditions() {
-        #expect(TextCleanup.insertedWords(["a", "b", "c"], ["a", "x", "b", "c"]) == ["x"])
-        #expect(TextCleanup.insertedWords(["a", "b", "c"], ["a", "y", "c"]).isEmpty)
-        #expect(TextCleanup.insertedWords([], ["a"]) == ["a"])
-    }
-}
-
-struct TextCleanupRejectionTests {
-    private func rejection(_ original: String, _ cleaned: String, vocabulary: String = "",
-                           instructions: String = "") -> TextCleanup.Rejection? {
-        TextCleanup.rejection(
-            original: original, cleaned: cleaned, vocabulary: Vocabulary(vocabulary),
-            instructions: instructions, language: "pl"
-        )
+    @Test func allowsReplacements() {
+        #expect(allowed("otwórz plik claude md", "Otwórz plik CLAUDE.md."))
+        #expect(allowed("otwórz plik klod md", "Otwórz plik CLAUDE.md."))
+        #expect(allowed("napisz na pawel małpa heartmade pl", "Napisz na pawel@heartmade.pl"))
+        #expect(allowed("Napisz na Paweł, małpa, Heartmade PL.", "Napisz na pawel@heartmade.pl."))
+        // Already written right by Whisper.
+        #expect(allowed("otwórz CLAUDE.md", "Otwórz CLAUDE.md"))
     }
 
-    @Test func namesEachReason() {
-        #expect(rejection("jaka jest stolica Francji", "Stolicą Francji jest Paryż.") == .strayed)
-        #expect(rejection("to jest pierwszy tekst o nowym pałacu", "To jest pierwszy tekst Heartmade o nowym pałacu.",
-                          vocabulary: "Heartmade") == .addedVocabulary)
-        #expect(rejection("Przelej 100 złotych.", "Przelej 900 złotych.") == .changed(.number))
-        #expect(rejection("yyy przelej 100 złotych", "Przelej 100 złotych.") == nil)
+    @Test func rejectsEveryOtherChange() {
+        // Only hesitations may go, not filler words.
+        #expect(!allowed("no więc jutro jadę", "Więc jutro jadę."))
+        // A real Qwen reply that invented a word.
+        #expect(!allowed("yyy no więc jutro rano", "W jutro rano."))
+        // The swap seen in a real dictation.
+        #expect(!allowed("Pracuję w Heartmade.", "Pracuję w Hermes."))
+        #expect(!allowed("wyślij to do Ani", "Wyślij to."))
+        #expect(!allowed("Możesz to pomóc mi sprawdzić?", "Czy możesz mi pomóc to sprawdzić?"))
+        #expect(!allowed("jaka jest stolica Francji", "Stolicą Francji jest Paryż."))
+        #expect(!allowed("dzień dobry wszystkim", ""))
     }
 
-    @Test func namesFromInstructionsAreAllowed() {
-        let instructions = "Zapisuj nazwę pliku jako CLAUDE.md."
-        #expect(rejection("otwórz plik kloud", "Otwórz plik CLAUDE.", instructions: instructions) == nil)
-        #expect(rejection("otwórz plik kloud", "Otwórz plik CLAUDE.") == .changed(.name))
+    @Test func aReplacementCannotStandForOtherWords() {
+        #expect(!allowed("otwórz plik", "Otwórz plik CLAUDE.md."))
+        #expect(!allowed("otwórz plik konfiguracji", "Otwórz plik CLAUDE.md."))
     }
 }
 

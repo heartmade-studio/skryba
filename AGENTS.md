@@ -30,8 +30,9 @@ showcase, so the code must stay small, readable, and well commented.
 - Paste only into the `PasteTarget` (app, window, field) captured at the start of the take; otherwise fall back
   to the clipboard. Never overwrite a clipboard the user changed meanwhile (`Paster.decide`).
 - Recordings live only in `AudioRecorder.directory`, and every path out of a take deletes its file.
-- AI cleanup is optional and must never lose a dictation: on any error or an unfaithful reply
-  (`TextCleanup.rejection`, run on the final text), paste the plain transcript. Never log
+- AI cleanup is optional, and it only removes hesitations and applies the user's `Replacements`. It
+  must never lose a dictation: on any error, or a reply that changed anything else
+  (`TextCleanup.isAllowed`, run on the final text), paste the plain transcript. Never log
   dictated text; log only the kind of rejection.
 - Do not sandbox the app. The App Sandbox blocks the synthetic ⌘V. Distribution: source, plus an
   unnotarized universal DMG attached to each GitHub release (no Apple Developer Program). The DMG

@@ -180,14 +180,14 @@ struct SettingsView: View {
 
     private var cleanupTab: some View {
         @Bindable var settings = controller.settings
-        let defaultInstructions = TextCleanup.defaultInstructions(language: settings.language)
         return Form {
             Section {
-                Toggle("Clean up punctuation and style", isOn: $settings.cleanupEnabled)
+                Toggle("Remove hesitations and apply replacements", isOn: $settings.cleanupEnabled)
             } footer: {
                 FootnoteText("""
-                    A Groq language model adds punctuation, fixes misheard words and removes fillers like “yyy”. \
-                    It's a second request per dictation, so it's a little slower and costs a little: roughly \
+                    A Groq language model removes hesitations like “yyy” and “eee”, and applies your \
+                    replacements. It changes nothing else; if it does, the plain transcript is pasted. It's a \
+                    second request per dictation, so it's a little slower and costs a little: roughly \
                     $0.20 per 1,000 dictations with GPT-OSS, $0.80 with Qwen.
                     """)
             }
@@ -202,21 +202,18 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    TextEditor(text: $settings.cleanupInstructions)
-                        .font(.callout)
+                    TextEditor(text: $settings.replacements)
+                        .font(.callout.monospaced())
                         .frame(height: 150)
-                        .scrollDisabled(false) // the form doesn't scroll, but long instructions must
+                        .scrollDisabled(false) // the form doesn't scroll, but a long list must
                         .scrollContentBackground(.hidden)
                 } header: {
-                    HStack {
-                        Text("Instructions")
-                        Spacer()
-                        Button("Reset to default") { settings.cleanupInstructions = defaultInstructions }
-                            .disabled(settings.cleanupInstructions == defaultInstructions)
-                            .controlSize(.small)
-                    }
+                    Text("Replacements")
                 } footer: {
-                    FootnoteText("Your vocabulary is added to these instructions automatically.")
+                    FootnoteText("""
+                        One per line, as you say it → as it should be written, e.g. “claude md → CLAUDE.md” or \
+                        “pawel małpa heartmade pl → pawel@heartmade.pl”. Close variants (“klod md”) are caught too.
+                        """)
                 }
             }
         }

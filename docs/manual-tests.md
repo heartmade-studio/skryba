@@ -37,17 +37,12 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## AI cleanup
 
-- [ ] Turn on AI cleanup. Dictate with a few "yyy" and a self-correction ("do Ani, nie, do Kasi").
-      The HUD shows *Cleaning up…* and the pasted text is clean, with no rewording.
+- [ ] Turn on AI cleanup and add the replacement `claude md → CLAUDE.md`. Dictate "yyy otwórz plik
+      claude md". The HUD shows *Cleaning up…* and "Otwórz plik CLAUDE.md" is pasted.
 - [ ] Dictate a question ("jaka jest stolica Francji"). The question is pasted, not an answer.
-- [ ] Dictate "nie wysyłaj tego do klienta" and "przelej sto dwadzieścia złotych". The negation
-      and the amount survive cleanup. If the model changed them, the HUD says "AI cleanup changed
-      a negation/number" and the plain transcript is pasted.
-- [ ] Dictate "przelej sto złotych Ani i dwieście złotych Kasi". Amounts and names stay where they
-      were said.
+- [ ] Dictate "no to wyślij to jutro". "no" stays: only hesitations are removed.
 - [ ] The log shows `groq chat openai/gpt-oss-120b` with a timing and no `cleanup failed` line.
       Repeat with Qwen.
-- [ ] Edit the instructions, then **Reset to default** brings back the default for your language.
 
 ## Safety
 

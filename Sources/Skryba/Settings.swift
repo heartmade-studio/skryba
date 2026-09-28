@@ -30,8 +30,9 @@ final class Settings {
     var cleanupModel: TextCleanup.Model {
         didSet { defaults.set(cleanupModel.rawValue, forKey: Key.cleanupModel) }
     }
-    var cleanupInstructions: String {
-        didSet { defaults.set(cleanupInstructions, forKey: Key.cleanupInstructions) }
+    /// Rewrite rules for AI cleanup, one per line; see `Replacements`.
+    var replacements: String {
+        didSet { defaults.set(replacements, forKey: Key.replacements) }
     }
 
     @ObservationIgnored private let defaults = UserDefaults.standard
@@ -60,7 +61,7 @@ final class Settings {
         static let playSounds = "playSounds"
         static let cleanupEnabled = "cleanupEnabled"
         static let cleanupModel = "cleanupModel"
-        static let cleanupInstructions = "cleanupInstructions"
+        static let replacements = "replacements"
     }
 
     /// Returns false if the keychain refused the write; the previous key then stays in place.
@@ -77,14 +78,12 @@ final class Settings {
         trigger = defaults.string(forKey: Key.trigger).flatMap(Trigger.init) ?? .fn
         shortcut = defaults.data(forKey: Key.shortcut)
             .flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .default
-        let language = defaults.string(forKey: Key.language) ?? Self.systemLanguage
-        self.language = language
+        language = defaults.string(forKey: Key.language) ?? Self.systemLanguage
         vocabulary = defaults.string(forKey: Key.vocabulary) ?? ""
         playSounds = defaults.object(forKey: Key.playSounds) as? Bool ?? true
         cleanupEnabled = defaults.bool(forKey: Key.cleanupEnabled)
         cleanupModel = defaults.string(forKey: Key.cleanupModel).flatMap(TextCleanup.Model.init) ?? .gptOss
-        cleanupInstructions = defaults.string(forKey: Key.cleanupInstructions)
-            ?? TextCleanup.defaultInstructions(language: language)
+        replacements = defaults.string(forKey: Key.replacements) ?? ""
     }
 
     /// Defaults to the Mac's language when Skryba lists it; otherwise lets Whisper detect it.

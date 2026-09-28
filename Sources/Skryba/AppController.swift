@@ -353,19 +353,17 @@ final class AppController {
     /// Returns the cleaned-up text, or `text` unchanged plus a warning if cleanup fails or strays
     /// from it. The dictation itself must never be lost to this optional step.
     private func cleanUp(_ text: String, vocabulary: Vocabulary) async -> (text: String, warning: String?) {
-        // One snapshot of the settings, so a change in Settings during the request can't mix the rules.
-        let language = settings.language, instructions = settings.cleanupInstructions
+        // One snapshot of the rules, so a change in Settings during the request can't mix them.
+        let replacements = Replacements(settings.replacements)
         let cleanup = TextCleanup(client: GroqClient(apiKey: settings.apiKey), model: settings.cleanupModel)
         do {
-            let reply = try await cleanup.clean(text, instructions: instructions, vocabulary: vocabulary, language: language)
+            let reply = try await cleanup.clean(text, replacements: replacements, language: settings.language)
             // Judge exactly the text that would be pasted.
             let cleaned = vocabulary.correct(reply)
-            if let rejection = TextCleanup.rejection(
-                original: text, cleaned: cleaned, vocabulary: vocabulary, instructions: instructions, language: language
-            ) {
-                // Log the kind of rejection only, never the dictated words.
-                Self.log.notice("cleanup rejected: \(rejection.logDescription, privacy: .public)")
-                return (text, rejection.message)
+            guard TextCleanup.isAllowed(original: text, cleaned: cleaned, replacements: replacements) else {
+                // Never log the dictated words.
+                Self.log.notice("cleanup rejected: reply changed more than allowed")
+                return (text, TextCleanup.rejectionMessage)
             }
             return (cleaned, nil)
         } catch {
