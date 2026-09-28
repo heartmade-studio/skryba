@@ -1,3 +1,5 @@
+<p align="center"><img src="Resources/AppIcon.svg" width="128" alt="Skryba app icon: a quill over a sound wave"></p>
+
 # Skryba
 
 Hold **Fn**, speak, let go: your words appear as text wherever your cursor is.
@@ -14,6 +16,20 @@ Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app:
 
 **Status: 1.4.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
+
+## Screenshots
+
+It lives in the menu bar as a quill
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/menu-bar-icon-dark.svg"><img src="Resources/MenuBarIcon.svg" width="18" alt="the quill menu-bar icon"></picture>.
+While a recording waits to be transcribed, the quill becomes a tray.
+
+<p align="center"><img src="docs/images/menu.png" width="396" alt="The Skryba menu: Hold Fn to dictate, Copy last, Settings, Quit"></p>
+
+| General: provider, key and Test | Dictation: trigger, language, vocabulary |
+|---|---|
+| <img src="docs/images/settings-general.png" width="400" alt="General settings with the provider menu open: Groq, Cloudflare Workers AI, Local Whisper"> | <img src="docs/images/settings-dictation.png" width="400" alt="Dictation settings: Fn key, Polish, vocabulary list"> |
+| **Offline: saved recordings and local Whisper** | **AI Cleanup: model and replacements** |
+| <img src="docs/images/settings-offline.png" width="400" alt="Offline settings: saved recordings and the local Whisper fallback"> | <img src="docs/images/settings-ai-cleanup.png" width="400" alt="AI Cleanup settings with a list of replacements"> |
 
 ## How it works
 
