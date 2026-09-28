@@ -62,6 +62,39 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Quit Skryba mid-take. The mic dot disappears. At the next launch
       `ls "$TMPDIR/pl.heartmade.skryba"` shows no files (or the folder is missing).
 
+## Offline and bad connections
+
+- [ ] Turn Wi-Fi off. Hold Fn: the HUD shows *Offline · will be saved for later* under *Listening…*.
+      Release: you see "You're offline. The recording is saved…", and the menu-bar icon is a tray.
+- [ ] The menu lists the saved recording (time · length). Turn Wi-Fi on: within a few seconds a
+      notice says a recording is waiting. Nothing is sent by itself.
+- [ ] **Transcribe and copy** in the menu: the text is on the clipboard, the HUD says "Copied", the
+      recording disappears from the menu and the icon is the quill again.
+- [ ] **Delete…** asks for confirmation; after Delete the recording is gone from the menu and from
+      `~/Library/Application Support/Skryba/Pending`.
+- [ ] Simulate a stalled connection (Network Link Conditioner, *100% Loss*). Dictate: the HUD shows
+      *Transcribing…* with **Cancel**, then *Connection trouble · attempt 2 of 3…*. Click **Cancel**
+      in the HUD: the focus stays in your app, and the recording is saved. Repeat with **Cancel
+      transcription** in the menu.
+- [ ] With a stalled connection and no cancel, it gives up within about a minute and saves the take.
+- [ ] Hold Fn and stay silent or just cough (voice under 0.8 s). Nothing is saved to the menu.
+- [ ] Quit Skryba with a saved recording, relaunch: it is still listed and not sent.
+
+## Providers
+
+- [ ] Choose Cloudflare, enter the account ID and a Workers AI token, Save. Dictate a Polish
+      sentence: it is pasted. The log shows `cloudflare transcription` with a timing.
+- [ ] A wrong Cloudflare token shows "Cloudflare rejected the credentials…" and saves the take.
+- [ ] With Cloudflare chosen and AI cleanup on without a Groq key, the Cleanup tab asks for a Groq
+      key, and dictation still pastes the plain text.
+- [ ] Enable Settings → Offline → local Whisper, choose a model: it says "Ready". With Wi-Fi off,
+      dictate: the HUD says *Offline · will transcribe on this Mac*, then *Transcribing on this
+      Mac…*, and the text is pasted.
+- [ ] During *Transcribing on this Mac…* click **Cancel**: `pgrep whisper-cli` finds nothing, and
+      the recording is saved.
+- [ ] Point the whisper-cli path at a missing file: Settings shows the warning, and an offline
+      take is saved with that message.
+
 ## Settings
 
 - [ ] Enter a wrong API key and Save. Dictation shows "Groq rejected the API key".

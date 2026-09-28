@@ -26,20 +26,24 @@ struct SettingsView: View {
     let controller: AppController
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var apiKeyDraft: String
-    @State private var apiKeyStatus: APIKeyStatus?
+    @State private var apiKeyStatus: CredentialStatus?
+    @State private var cloudflareTokenDraft: String
+    @State private var cloudflareTokenStatus: CredentialStatus?
 
-    private enum APIKeyStatus {
+    enum CredentialStatus {
         case saved, failed
     }
 
     init(controller: AppController) {
         self.controller = controller
         _apiKeyDraft = State(initialValue: controller.settings.apiKey)
+        _cloudflareTokenDraft = State(initialValue: controller.settings.cloudflareToken)
     }
 
     private enum Tab: String, CaseIterable {
         case general = "General"
         case dictation = "Dictation"
+        case offline = "Offline"
         case cleanup = "AI Cleanup"
     }
 
@@ -60,6 +64,7 @@ struct SettingsView: View {
                 switch tab {
                 case .general: generalTab
                 case .dictation: dictationTab
+                case .offline: offlineTab
                 case .cleanup: cleanupTab
                 }
             }
@@ -76,26 +81,26 @@ struct SettingsView: View {
     private var generalTab: some View {
         @Bindable var settings = controller.settings
         return Form {
-            Section("Groq") {
-                HStack {
-                    SecureField("API key", text: $apiKeyDraft, prompt: Text("gsk_…"))
-                        .onSubmit(saveAPIKey)
-                        .onChange(of: apiKeyDraft) { apiKeyStatus = nil }
-                    Button("Save", action: saveAPIKey)
-                        .disabled(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines) == settings.apiKey)
+            Section("Transcription") {
+                Picker("Provider", selection: $settings.provider) {
+                    ForEach(Settings.TranscriptionProvider.allCases) { Text($0.displayName).tag($0) }
                 }
-                switch apiKeyStatus {
-                case .saved:
-                    Label("Saved to your Keychain.", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green).font(.callout)
-                case .failed:
-                    Label("Couldn't save to your Keychain. The previous key is unchanged.", systemImage: "xmark.octagon.fill")
-                        .foregroundStyle(.red).font(.callout)
-                case nil:
-                    EmptyView()
+                switch settings.provider {
+                case .groq:
+                    groqKeyField
+                case .cloudflare:
+                    TextField("Account ID", text: $settings.cloudflareAccountID, prompt: Text("32 hex characters"))
+                    CredentialField(
+                        title: "API token", prompt: "Workers AI token", draft: $cloudflareTokenDraft,
+                        saved: settings.cloudflareToken, status: $cloudflareTokenStatus, save: saveCloudflareToken
+                    )
+                    FootnoteText("""
+                        Create a token with the Workers AI permission. Cloudflare runs the same Whisper \
+                        model; audio goes to your Cloudflare account instead of Groq.
+                        """)
+                    Link("Workers AI: get started", destination: URL(string: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/")!)
+                        .font(.callout)
                 }
-                Link("Get a free key at console.groq.com", destination: URL(string: "https://console.groq.com/keys")!)
-                    .font(.callout)
             }
 
             Section("Permissions") {
@@ -183,6 +188,10 @@ struct SettingsView: View {
         return Form {
             Section {
                 Toggle("Remove hesitations and apply replacements", isOn: $settings.cleanupEnabled)
+                if settings.cleanupEnabled, settings.apiKey.isEmpty {
+                    // Cleanup always uses Groq, even when Cloudflare transcribes.
+                    groqKeyField
+                }
             } footer: {
                 FootnoteText("""
                     A Groq language model removes hesitations like “yyy” and “eee”, and applies your \
@@ -218,11 +227,114 @@ struct SettingsView: View {
             }
         }
     }
+
+    private var offlineTab: some View {
+        @Bindable var settings = controller.settings
+        return Form {
+            Section {
+                FootnoteText("""
+                    When a take can't be transcribed (you're offline, the provider fails, or you cancel), \
+                    Skryba keeps the recording. Transcribe or delete it from the menu. Saved recordings \
+                    stay private on this Mac, aren't backed up, and are deleted after 7 days.
+                    """)
+            } header: {
+                Text("Saved recordings")
+            }
+
+            Section {
+                Toggle("Transcribe on this Mac when the cloud can't be reached", isOn: $settings.localWhisperEnabled)
+                if settings.localWhisperEnabled {
+                    TextField("whisper-cli", text: $settings.whisperExecutablePath, prompt: Text(LocalWhisper.defaultExecutablePaths[0]))
+                    LabeledContent("Model") {
+                        HStack {
+                            TextField("Model", text: $settings.whisperModelPath, prompt: Text("~/models/ggml-large-v3-turbo.bin"))
+                                .labelsHidden()
+                            Button("Choose…") { chooseModel() }
+                        }
+                    }
+                    if let problem = settings.localWhisper.setupProblem {
+                        Label(problem.localizedDescription, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange).font(.callout)
+                    } else {
+                        Label("Ready. Audio stays on this Mac.", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green).font(.callout)
+                    }
+                }
+            } header: {
+                Text("Local Whisper (optional)")
+            } footer: {
+                FootnoteText("""
+                    Install whisper.cpp (brew install whisper-cpp) and download a multilingual model, \
+                    e.g. ggml-large-v3-turbo.bin (1.6 GB, best for Polish) or ggml-small.bin (0.5 GB, \
+                    faster). Skryba uses it only when the cloud is offline or fails; it's slower than Groq.
+                    """)
+            }
+            if settings.localWhisperEnabled {
+                Link("whisper.cpp models on Hugging Face", destination: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/tree/main")!)
+                    .font(.callout)
+            }
+        }
+    }
+
+    private var groqKeyField: some View {
+        Group {
+            CredentialField(
+                title: "Groq API key", prompt: "gsk_…", draft: $apiKeyDraft,
+                saved: controller.settings.apiKey, status: $apiKeyStatus, save: saveAPIKey
+            )
+            Link("Get a free key at console.groq.com", destination: URL(string: "https://console.groq.com/keys")!)
+                .font(.callout)
+        }
+    }
 }
 
 extension SettingsView {
     private func saveAPIKey() {
         apiKeyStatus = controller.settings.saveAPIKey(apiKeyDraft) ? .saved : .failed
+    }
+
+    private func saveCloudflareToken() {
+        cloudflareTokenStatus = controller.settings.saveCloudflareToken(cloudflareTokenDraft) ? .saved : .failed
+    }
+
+    private func chooseModel() {
+        let panel = NSOpenPanel()
+        panel.message = "Choose a whisper.cpp model (ggml-….bin)"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            controller.settings.whisperModelPath = url.path
+        }
+    }
+}
+
+/// A secret with an explicit Save: it goes to the keychain only when the user means it.
+private struct CredentialField: View {
+    let title: String
+    let prompt: String
+    @Binding var draft: String
+    let saved: String
+    @Binding var status: SettingsView.CredentialStatus?
+    let save: () -> Void
+
+    var body: some View {
+        HStack {
+            SecureField(title, text: $draft, prompt: Text(prompt))
+                .onSubmit(save)
+                .onChange(of: draft) { status = nil }
+            Button("Save", action: save)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines) == saved)
+        }
+        switch status {
+        case .saved:
+            Label("Saved to your Keychain.", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green).font(.callout)
+        case .failed:
+            Label("Couldn't save to your Keychain. The previous value is unchanged.", systemImage: "xmark.octagon.fill")
+                .foregroundStyle(.red).font(.callout)
+        case nil:
+            EmptyView()
+        }
     }
 }
 

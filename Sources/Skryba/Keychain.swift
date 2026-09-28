@@ -2,21 +2,26 @@ import Foundation
 import os
 import Security
 
-/// Stores the Groq API key in the login keychain — never in UserDefaults or the repo.
+/// Stores API credentials in the login keychain — never in UserDefaults or the repo.
 enum Keychain {
-    private static let service = "pl.heartmade.skryba"
-    private static let account = "groq-api-key"
+    /// One keychain item per credential.
+    enum Account: String {
+        case groq = "groq-api-key"
+        case cloudflare = "cloudflare-api-token"
+    }
 
-    private static var baseQuery: [String: Any] {
+    private static let service = "pl.heartmade.skryba"
+
+    private static func baseQuery(_ account: Account) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrAccount as String: account.rawValue,
         ]
     }
 
-    static func read() -> String? {
-        var query = baseQuery
+    static func read(_ account: Account) -> String? {
+        var query = baseQuery(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -31,17 +36,18 @@ enum Keychain {
 
     /// Stores the key (an empty value deletes it). Updates in place, so a failed write never
     /// destroys the previous key. Returns false if the keychain refused.
-    static func save(_ value: String) -> Bool {
+    static func save(_ value: String, for account: Account) -> Bool {
+        let query = baseQuery(account)
         guard !value.isEmpty else {
-            let status = SecItemDelete(baseQuery as CFDictionary)
+            let status = SecItemDelete(query as CFDictionary)
             guard status == errSecSuccess || status == errSecItemNotFound else { log(status, "delete"); return false }
             return true
         }
 
         let data = Data(value.utf8)
-        var status = SecItemUpdate(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
-            var attributes = baseQuery
+            var attributes = query
             attributes[kSecValueData as String] = data
             status = SecItemAdd(attributes as CFDictionary, nil)
         }

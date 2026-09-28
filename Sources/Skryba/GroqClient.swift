@@ -89,12 +89,12 @@ struct GroqClient {
         let (data, response) = try await Self.session.upload(for: request, from: body)
         Self.log.info("groq \(label, privacy: .public): \(body.count / 1024) KB, \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         guard let http = response as? HTTPURLResponse else {
-            throw SkrybaError.api(status: 0, message: "No response from Groq.")
+            throw SkrybaError.api(provider: "Groq", status: 0, message: "No response.")
         }
         guard http.statusCode == 200 else {
             let message = (try? JSONDecoder().decode(ErrorEnvelope.self, from: data))?.error.message
                 ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
-            throw SkrybaError.api(status: http.statusCode, message: message)
+            throw SkrybaError.api(provider: "Groq", status: http.statusCode, message: message)
         }
         return data
     }
@@ -163,17 +163,17 @@ struct GroqClient {
 
 enum SkrybaError: LocalizedError {
     case recordingFailed
-    case api(status: Int, message: String)
+    case api(provider: String, status: Int, message: String)
     case incompleteReply(reason: String)
 
     var errorDescription: String? {
         switch self {
         case .recordingFailed:
             "Could not start recording."
-        case .api(let status, let message) where status == 401:
-            "Groq rejected the API key (\(message)). Check it in Settings."
-        case .api(_, let message):
-            "Groq: \(message)"
+        case .api(let provider, let status, let message) where status == 401 || status == 403:
+            "\(provider) rejected the credentials (\(message)). Check them in Settings."
+        case .api(let provider, _, let message):
+            "\(provider): \(message)"
         case .incompleteReply(let reason):
             "The reply was incomplete (\(reason))."
         }
