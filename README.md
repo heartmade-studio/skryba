@@ -113,7 +113,9 @@ every time.
 
 The fix is free and takes a minute. Open **Xcode → Settings → Accounts**, add your Apple ID, then
 click **Manage Certificates… → + → Apple Development**. `build.sh` picks up that identity
-automatically.
+automatically. It signs the app with a designated requirement based on the signed app identifier
+and your certificate's Team ID, so renewing an Apple Development certificate in the same team does
+not change the app identity macOS uses for privacy grants.
 
 If the certificate shows up in Xcode but `build.sh` still signs ad hoc, your keychain is missing
 Apple's intermediate certificate. Download
@@ -274,8 +276,9 @@ Cloudflare dashboard shows the real numbers.
 ## Troubleshooting
 
 - **Nothing pastes, or the Accessibility toggle is on but has no effect.** This usually means an
-  old grant belongs to a previous build's signature. Remove Skryba from System Settings → Privacy &
-  Security → Accessibility (the **−** button), then grant it again.
+  old grant belongs to a previous build's signature. In Settings → Permissions, open Accessibility
+  Settings, remove Skryba with the **−** button, then grant it again. With an Apple Development
+  identity, rebuilds signed by the same Team ID should retain the grant; ad-hoc builds still reset it.
 - **"Shortcut is already taken."** Another app registered it. Pick a different one.
 - **The text comes out in the wrong language.** Set the language explicitly in Settings.
 - **Takes are discarded as "No speech detected", or noise gets through.** Watch the logged levels

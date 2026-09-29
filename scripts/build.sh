@@ -35,6 +35,28 @@ if [[ -z "$IDENTITY" ]]; then
   IDENTITY="-"
 fi
 codesign --force --sign "$IDENTITY" "$APP"
+
+# Apple Development certificates can be renewed while keeping the same Team ID. Use a
+# designated requirement based on that stable team and this app's signed identifier so
+# TCC can recognize the replacement certificate as an update to the same app.
+SIGNATURE_INFO="$(codesign -dvv "$APP" 2>&1)"
+if grep -q '^Authority=Apple Development:' <<<"$SIGNATURE_INFO"; then
+  TEAM_ID="$(sed -n 's/^TeamIdentifier=//p' <<<"$SIGNATURE_INFO" | head -n 1)"
+  BUNDLE_ID="$(sed -n 's/^Identifier=//p' <<<"$SIGNATURE_INFO" | head -n 1)"
+  if [[ -z "$TEAM_ID" || "$TEAM_ID" == "not set" || -z "$BUNDLE_ID" ]]; then
+    echo "error: could not read Team ID and app identifier from the signed app." >&2
+    exit 1
+  fi
+
+  REQUIREMENT="designated => anchor apple generic and identifier \"$BUNDLE_ID\" and certificate leaf[subject.OU] = \"$TEAM_ID\""
+  REQUIREMENT_BINARY="$(mktemp)"
+  trap 'rm -f "$REQUIREMENT_BINARY"' EXIT
+  csreq -r="$REQUIREMENT" -b "$REQUIREMENT_BINARY"
+  codesign --force --sign "$IDENTITY" --requirements "=$REQUIREMENT" "$APP"
+  codesign --verify --strict "$APP"
+  rm -f "$REQUIREMENT_BINARY"
+  trap - EXIT
+fi
 echo "Built $APP (signed with: $IDENTITY)"
 
 if [[ "${1:-}" == "--install" ]]; then
