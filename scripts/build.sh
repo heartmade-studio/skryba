@@ -48,14 +48,10 @@ if grep -q '^Authority=Apple Development:' <<<"$SIGNATURE_INFO"; then
     exit 1
   fi
 
-  REQUIREMENT="designated => anchor apple generic and identifier \"$BUNDLE_ID\" and certificate leaf[subject.OU] = \"$TEAM_ID\""
-  REQUIREMENT_BINARY="$(mktemp)"
-  trap 'rm -f "$REQUIREMENT_BINARY"' EXIT
-  csreq -r="$REQUIREMENT" -b "$REQUIREMENT_BINARY"
+  # The WWDR marker on the intermediate limits this to Apple's developer certificates.
+  REQUIREMENT="designated => anchor apple generic and identifier \"$BUNDLE_ID\" and certificate 1[field.1.2.840.113635.100.6.2.1] exists and certificate leaf[subject.OU] = \"$TEAM_ID\""
   codesign --force --sign "$IDENTITY" --requirements "=$REQUIREMENT" "$APP"
   codesign --verify --strict "$APP"
-  rm -f "$REQUIREMENT_BINARY"
-  trap - EXIT
 fi
 echo "Built $APP (signed with: $IDENTITY)"
 

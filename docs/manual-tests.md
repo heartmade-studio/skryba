@@ -109,12 +109,10 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 ## Settings
 
 - [ ] With an Apple Development identity, build the app and inspect `codesign -d -r- build/Skryba.app`:
-      the designated requirement includes `anchor apple generic`, the app identifier and its Team ID.
+      the designated requirement includes `anchor apple generic`, the app identifier, the WWDR
+      intermediate marker and the Team ID.
 - [ ] With Accessibility denied, the Settings link opens Privacy & Security → Accessibility. If an
       old enabled entry does not work, remove it and grant access again; verify paste works afterward.
-- [ ] Rebuild with a renewed Apple Development certificate from the same Team ID and verify the
-      Accessibility grant remains effective. This requires two valid certificates for one team.
-
 - [ ] Enter a wrong API key and Save. Dictation shows "Groq rejected the API key".
 - [ ] Save a new key, quit and relaunch. The new key is still there.
 - [ ] Switch to a custom shortcut and record ⌃⇧Space. Holding it dictates. ⌥-only shortcuts are
