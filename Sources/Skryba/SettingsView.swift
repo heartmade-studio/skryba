@@ -124,6 +124,12 @@ struct SettingsView: View {
                     granted: controller.accessibilityGranted,
                     action: controller.requestAccessibility
                 )
+                if !controller.accessibilityGranted {
+                    FootnoteText("If Accessibility is enabled but Skryba still cannot paste, remove its old entry and grant access again.")
+                    Button("Open Accessibility Settings…") {
+                        SystemSettings.open(.accessibility)
+                    }
+                }
             }
 
             Section {
