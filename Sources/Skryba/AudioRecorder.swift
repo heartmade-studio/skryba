@@ -19,6 +19,8 @@ final class AudioRecorder {
     private var meterTask: Task<Void, Never>?
     private var voicedWindows = 0
     private var peakLevel: Float = -160
+    /// Where the last voiced window ended, in seconds from the start of the take.
+    private var lastVoiceEnd: TimeInterval = 0
 
     private static let settings: [String: Any] = [
         AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -32,6 +34,8 @@ final class AudioRecorder {
     /// Average power (dBFS) above which a window counts as voice. A quiet room on a MacBook mic
     /// sits around -55…-65 dB; speech at normal distance around -30…-15 dB.
     private static let voiceThreshold: Float = -40
+    /// Silence kept after the last voiced window, so a soft word ending below the threshold isn't cut.
+    private static let trailingSilenceKept: TimeInterval = 0.5
 
     private let log = Logger(subsystem: "pl.heartmade.skryba", category: "audio")
 
@@ -71,6 +75,7 @@ final class AudioRecorder {
         self.recorder = recorder
         voicedWindows = 0
         peakLevel = -160
+        lastVoiceEnd = 0
         meterTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(Self.meterWindow))
@@ -83,13 +88,53 @@ final class AudioRecorder {
         guard let recorder else { return nil }
         meterTask?.cancel()
         meterTask = nil
-        let duration = recorder.currentTime
+        var duration = recorder.currentTime
         recorder.stop()
         self.recorder = nil
 
+        let recorded = duration
+        if voicedWindows > 0 {
+            duration = trimTrailingSilence(of: recorder.url, duration: duration)
+        }
         let voiced = Double(voicedWindows) * Self.meterWindow
-        log.info("take: \(duration, format: .fixed(precision: 2))s, voiced \(voiced, format: .fixed(precision: 2))s, peak \(self.peakLevel, format: .fixed(precision: 1)) dB")
+        log.info("take: \(recorded, format: .fixed(precision: 2))s, sent \(duration, format: .fixed(precision: 2))s, voiced \(voiced, format: .fixed(precision: 2))s, peak \(self.peakLevel, format: .fixed(precision: 1)) dB")
         return Clip(url: recorder.url, duration: duration, voicedDuration: voiced)
+    }
+
+    /// Cuts the silence after the last word and returns the new duration. Silence at the end is
+    /// where Whisper makes things up: it keeps "speaking" by continuing its prompt (the vocabulary
+    /// list) or adding a subtitle outro. On any error the take is left whole.
+    private func trimTrailingSilence(of url: URL, duration: TimeInterval) -> TimeInterval {
+        let end = lastVoiceEnd + Self.trailingSilenceKept
+        guard end < duration - Self.meterWindow else { return duration }
+
+        let trimmed = url.deletingPathExtension().appendingPathExtension("trimmed.m4a")
+        do {
+            try Self.copy(url, to: trimmed, seconds: end)
+            _ = try FileManager.default.replaceItemAt(url, withItemAt: trimmed)
+            return end
+        } catch {
+            Self.remove(trimmed)
+            log.error("could not trim the take: \(error.localizedDescription, privacy: .public)")
+            return duration
+        }
+    }
+
+    /// Re-encodes the first `seconds` of an AAC file. The files go out of scope (and are closed)
+    /// when this returns.
+    private static func copy(_ source: URL, to destination: URL, seconds: TimeInterval) throws {
+        let input = try AVAudioFile(forReading: source)
+        let format = input.processingFormat
+        let frames = AVAudioFrameCount(min(Double(input.length), seconds * format.sampleRate))
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else {
+            throw SkrybaError.recordingFailed
+        }
+        try input.read(into: buffer, frameCount: frames)
+        let output = try AVAudioFile(
+            forWriting: destination, settings: settings,
+            commonFormat: format.commonFormat, interleaved: format.isInterleaved
+        )
+        try output.write(from: buffer)
     }
 
     private func sampleLevel() {
@@ -97,6 +142,9 @@ final class AudioRecorder {
         recorder.updateMeters()
         let level = recorder.averagePower(forChannel: 0)
         peakLevel = max(peakLevel, level)
-        if level > Self.voiceThreshold { voicedWindows += 1 }
+        if level > Self.voiceThreshold {
+            voicedWindows += 1
+            lastVoiceEnd = recorder.currentTime
+        }
     }
 }
