@@ -14,7 +14,7 @@ later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
 25 Swift files, about 3,400 lines including comments.
 
-**Status: 1.4.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
+**Status: 1.5.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
 
 ## Screenshots
@@ -35,7 +35,7 @@ While a recording waits to be transcribed, the quill becomes a tray.
 
 ```
 hold Fn      ──► AVAudioRecorder (16 kHz mono AAC, temp file) + level meter
-release      ──► discard if the level meter heard no voice
+release      ──► discard if the level meter heard no voice, cut the silence after the last word
              ──► save the take to a private queue (kept until it's transcribed)
              ──► Groq or Cloudflare (whisper-large-v3-turbo); visible, cancellable retries
                  offline or failed? whisper.cpp on this Mac if enabled, else keep it for later
@@ -50,7 +50,7 @@ release      ──► discard if the level meter heard no voice
 | `FnKey.swift` | Hold-Fn trigger via NSEvent modifier monitors. Pressing any other key while Fn is down (Fn+⌫, Fn+↑) cancels the take. |
 | `FnGesture.swift` | Everything a Fn press means, in one place: hold to talk, a triple tap for hands-free, a tap to stop. A cancelled take resets it, so no half-finished gesture outlives it. |
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
-| `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. |
+| `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. Cuts the trailing silence, where Whisper would otherwise invent words. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
 | `CloudflareClient.swift` | The same Whisper model through Cloudflare Workers AI, as an alternative to Groq, plus its chat models for AI cleanup. |
 | `ChatCompletion.swift` | The OpenAI-style chat request that both providers accept, for AI cleanup. |

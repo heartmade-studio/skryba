@@ -14,6 +14,8 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
       Slack (Electron) and in Terminal.
 - [ ] Hold Fn and stay silent for 2 s. You see "No speech detected" and nothing is pasted.
 - [ ] Tap Fn quickly (under 0.3 s). Nothing happens: no HUD, no sound.
+- [ ] Say a sentence ending in a vocabulary term, then stay silent for 3 s before releasing. The log
+      shows `sent` about 2.5 s shorter than `take`, the last word is intact, and nothing follows it.
 - [ ] Fn+⌫ deletes forward and Fn+↑ pages up, with no recording, HUD or sound.
 
 ## Hands-free (1.2.2)
