@@ -40,7 +40,7 @@ release      ──► discard if the level meter heard no voice, cut the silenc
              ──► Groq or Cloudflare (whisper-large-v3-turbo); visible, cancellable retries
                  offline or failed? whisper.cpp on this Mac if enabled, else keep it for later
              ──► drop text Whisper invents on near-silence, fix vocabulary near misses
-             ──► optional: AI cleanup of hesitations and your replacements (a chat model at the same provider)
+             ──► optional: separate cloud/local cleanup of hesitations and replacements
              ──► same app, window and field in focus? clipboard ← text, ⌘V, clipboard restored
 ```
 
@@ -53,7 +53,9 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. Cuts the trailing silence, where Whisper would otherwise invent words. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
 | `CloudflareClient.swift` | The same Whisper model through Cloudflare Workers AI, as an alternative to Groq, plus its chat models for AI cleanup. |
-| `ChatCompletion.swift` | The OpenAI-style chat request that both providers accept, for AI cleanup. |
+| `ChatCompletion.swift` | The OpenAI-style chat request used for AI cleanup. |
+| `LocalChatClient.swift` | Optional cleanup through LM Studio on this Mac's loopback address; it never sends local transcripts to the cloud. |
+| `UpdateChecker.swift` | Checks GitHub releases daily or on request and points to the official DMG when a newer version exists. |
 | `LocalWhisper.swift` | Optional offline transcription: converts the take to WAV with AVFoundation and runs `whisper-cli` directly (no shell). Cancelling or a timeout stops it. |
 | `PendingRecordings.swift` | Takes not transcribed yet: a private folder, left out of backups, emptied after 7 days. |
 | `NetworkMonitor.swift` | Knows when the Mac has no network, so the HUD says "Offline" as soon as you start. |
@@ -81,6 +83,14 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 Download [Skryba.dmg](https://github.com/heartmade-studio/skryba/releases/latest/download/Skryba.dmg)
 from the [latest release](https://github.com/heartmade-studio/skryba/releases/latest), open it and
 drag Skryba into Applications. It is a universal build for Apple Silicon and Intel.
+
+While it runs, Skryba checks the latest GitHub release at launch and once a day. A download icon
+in the menu bar and **Update available** in the menu tell you when a newer DMG is published.
+**Check for Updates…** runs the check on demand. **Download DMG** opens the official release
+download in your browser; drag the new app into Applications to replace the old one. This does not
+change your saved preferences. macOS permissions depend on the release's code signature, so a
+release signed with a different identity may ask for access again. The check contacts GitHub but
+sends no dictation or settings data.
 
 Skryba is not notarized by Apple, so macOS blocks the first launch with *"Apple could not verify
 Skryba is free of malware"*. If you trust this build:
@@ -170,15 +180,18 @@ with **Test**, and grant two permissions:
 
 ## Privacy
 
-Skryba has no servers, accounts, analytics or telemetry. It talks to the provider you chose:
-`api.groq.com` or `api.cloudflare.com`.
+Skryba has no servers, accounts, analytics or telemetry. Cloud dictation talks to the provider
+you chose (`api.groq.com` or `api.cloudflare.com`); update checks contact GitHub. Local Whisper
+and optional LM Studio cleanup run on this Mac.
 
-- **What leaves your Mac:** the audio of each take, plus your vocabulary list (sent as Whisper's
-  prompt), to that one provider. With AI cleanup on, the transcript and your replacements also go
-  to a chat model at that same provider. If you put client names in the vocabulary,
+- **What leaves your Mac:** for a cloud transcription, the audio of each take, plus your vocabulary
+  list (sent as Whisper's prompt), go to that one provider. If cloud AI cleanup is on, the transcript
+  and your replacements also go to a chat model at that provider. A local fallback's transcript is
+  never sent to cloud cleanup; optional local cleanup sends it only to LM Studio at `127.0.0.1`.
+  If you put client names in the vocabulary,
   the provider receives them with every request. Read
   [Groq's privacy policy](https://groq.com/privacy-policy/) or Cloudflare's if that matters for
-  your use. Local Whisper sends nothing anywhere.
+  your use. Local Whisper sends no audio to a cloud service.
 - **What stays local:** your settings and vocabulary (in UserDefaults), the API key (in the
   keychain), and the last transcript (in memory only, shown under *Copy last*).
 - **Recordings** are kept in `~/Library/Application Support/Skryba/Pending` (readable only by you,
@@ -186,6 +199,8 @@ Skryba has no servers, accounts, analytics or telemetry. It talks to the provide
   there until you transcribe or delete it from the menu, and for at most 7 days. Deleting a file on
   an SSD is not a secure erase.
 - **Network:** an ephemeral URL session, so no cookies or HTTP cache are written to disk.
+- **Update check:** Skryba asks GitHub for the latest release at launch and once daily while it runs.
+  GitHub sees the request's IP address, but Skryba sends no dictation, credentials or settings.
 - **Microphone:** it is on only during a take, and macOS shows its orange dot while it is.
 - **Accessibility** is a broad permission. Skryba uses it to notice the Fn key, to check which
   window and field have focus, and to send ⌘V. It never reads the content of your fields, and never
@@ -217,20 +232,25 @@ Skryba never throws a dictation away because the network is gone.
   faster), and choose it in Settings → Offline. Then either pick **Local Whisper** as the provider
   (audio never leaves your Mac), or keep Groq or Cloudflare and turn local Whisper on as the
   fallback for when the cloud is offline or fails. **Test** in Settings records a few seconds and
-  shows the text and how long it took. AI cleanup is skipped while offline.
+  shows the text and how long it took. Cloud cleanup is skipped while offline; optional LM Studio
+  cleanup still works on this Mac if its server is running.
 
 ## AI cleanup (optional, off by default)
 
-Whisper transcribes what it hears, including "yyy" and "eee". Turn on **Settings → AI cleanup** to
-pass each transcript through a chat model at the provider that transcribes, so the text goes
-nowhere the audio didn't:
+Whisper transcribes what it hears, including "yyy" and "eee". **Settings → AI Cleanup** has
+independent switches for cloud and Local Whisper transcripts. Cloud cleanup is a second request
+to the provider that transcribed the audio, so turn it off if faster pasting matters more:
 
 - **Groq:** `openai/gpt-oss-120b` by default, or `qwen/qwen3.8-27b` (preview).
 - **Cloudflare:** `@cf/openai/gpt-oss-120b` by default, `@cf/google/gemma-4-26b-a4b-it` or
   `@cf/mistralai/mistral-small-3.1-24b-instruct`.
-- **Local Whisper:** no cleanup. Nothing leaves your Mac.
+- **Local Whisper:** optionally use a chat model in [LM Studio](https://lmstudio.ai/docs/developer/core/server).
+  Load a model, start its local server on port 1234, enable local cleanup and choose the model ID
+  from the list. Skryba calls only `127.0.0.1:1234`; a local fallback never sends its transcript
+  to Groq or Cloudflare chat. If LM Studio is unavailable or too slow, the plain transcript is pasted.
 
-Each provider remembers its own choice. Every model that can reason does so before answering
+Each cloud provider remembers its own model choice, and the local model ID is saved separately.
+Every cloud model that can reason does so before answering
 (Mistral can't): in tests, GPT-OSS on its lowest setting missed misspelled replacements like
 "klod md". Quality comes before speed here. Cleanup does two things only:
 

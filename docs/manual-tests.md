@@ -39,7 +39,7 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## AI cleanup
 
-- [ ] Turn on AI cleanup and add the replacement `claude md → CLAUDE.md`. Dictate "yyy otwórz plik
+- [ ] Turn on **Clean up cloud transcriptions** and add the replacement `claude md → CLAUDE.md`. Dictate "yyy otwórz plik
       claude md". The HUD shows *Cleaning up…* and "Otwórz plik CLAUDE.md" is pasted.
 - [ ] Dictate a question ("jaka jest stolica Francji"). The question is pasted, not an answer.
 - [ ] Dictate "no to wyślij to jutro". "no" stays: only hesitations are removed.
@@ -50,8 +50,21 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
       `cloudflare chat @cf/…` with a timing. Switch back to Groq: its earlier choice is kept.
 - [ ] With Gemma on Cloudflare, click **Skip** while the HUD shows *Cleaning up…*: the plain
       transcript is pasted at once, with no warning, and the log says `cleanup skipped by the user`.
-- [ ] Switch the provider to Local Whisper: the Cleanup tab shows no picker and says cleanup needs
-      Groq or Cloudflare. A dictation pastes the plain text, with no chat request in the log.
+- [ ] Cloud and local cleanup toggles are independent: turning local cleanup on does not change the
+      cloud toggle, and switching between Groq and Cloudflare keeps their saved model selections.
+- [ ] Install LM Studio, load a chat model, start its local server on port 1234. Turn on **Clean up
+      Local Whisper transcriptions**, refresh the available model list and select a model. With Local
+      Whisper selected, dictate the same replacement example: the cleaned text is pasted.
+- [ ] In LM Studio's server logs, confirm the local cleanup request goes to `127.0.0.1:1234`. The
+      Skryba app log contains no transcript. Stop LM Studio: plain text is still pasted with a cleanup
+      warning, and no server response body or dictated text appears in the app log.
+- [ ] Turn local cleanup off and dictate again: the plain Local Whisper transcript is pasted without
+      a cleanup request.
+- [ ] Enable Local Whisper as cloud fallback, leave cloud cleanup on and local cleanup off, then
+      make the cloud transcription fail. The local transcript is pasted without any Groq or Cloudflare
+      chat request. Turn local cleanup on and retry: cleanup goes only to LM Studio on loopback.
+- [ ] Have local cleanup return a changed/invented word. `TextCleanup.isAllowed` rejects it and the
+      plain local transcript is pasted.
 
 ## Safety
 
@@ -109,6 +122,16 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
       take is saved with that message.
 
 ## Settings
+
+- [ ] With the current GitHub release installed, choose **Check for Updates…** in the menu. It says
+      Skryba is up to date, without downloading anything.
+- [ ] Run an older signed bundle while a newer release with `Skryba.dmg` exists. The menu bar shows
+      the download icon and the menu says **Update available** with the newer version. The normal
+      recording and saved-recording icons still take priority while dictating or when audio is saved.
+- [ ] Choose **Update available** or **Download DMG** in the update alert. The browser opens the
+      official `heartmade-studio/skryba` latest DMG URL; installing the DMG keeps saved preferences.
+- [ ] With GitHub unreachable, the automatic check shows no intrusive alert. A manual check gives a
+      short error and leaves dictation usable.
 
 - [ ] With an Apple Development identity, build the app and inspect `codesign -d -r- build/Skryba.app`:
       the designated requirement includes `anchor apple generic`, the app identifier, the WWDR
