@@ -6,7 +6,9 @@ import os
 struct GroqClient: ChatClient {
     static let transcriptionEndpoint = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
     static let chatEndpoint = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
-    static let model = "whisper-large-v3-turbo"
+    /// The full model, not turbo: turbo misheard names and English terms in Polish dictation
+    /// ("Heartman" → "Hrp Noan"). It costs more ($0.111 vs $0.04 per hour) and is a little slower.
+    static let model = "whisper-large-v3"
 
     let apiKey: String
 

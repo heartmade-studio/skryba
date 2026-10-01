@@ -6,7 +6,7 @@ Hold **Fn**, speak, let go: your words appear as text wherever your cursor is.
 
 Skryba (Polish for *scribe*) is a small open-source macOS menu-bar app for push-to-talk dictation.
 It records while you hold the Fn (🌐) key, or a shortcut of your choice. It sends the audio to
-**Whisper large-v3-turbo**, hosted by [Groq](https://groq.com) or, if you prefer,
+**Whisper large-v3**, hosted by [Groq](https://groq.com) or, if you prefer, its turbo variant on
 [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/), and pastes the transcript
 into the text field you were typing in. No internet? The take is kept, and you can transcribe it
 later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
@@ -37,7 +37,7 @@ While a recording waits to be transcribed, the quill becomes a tray.
 hold Fn      ──► AVAudioRecorder (16 kHz mono AAC, temp file) + level meter
 release      ──► discard if the level meter heard no voice, cut the silence after the last word
              ──► save the take to a private queue (kept until it's transcribed)
-             ──► Groq or Cloudflare (whisper-large-v3-turbo); visible, cancellable retries
+             ──► Groq (whisper-large-v3) or Cloudflare (-turbo); visible, cancellable retries
                  offline or failed? whisper.cpp on this Mac if enabled, else keep it for later
              ──► drop text Whisper invents on near-silence, fix vocabulary near misses
              ──► optional: AI cleanup of hesitations and your replacements (a chat model at the same provider)
@@ -52,7 +52,7 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. Cuts the trailing silence, where Whisper would otherwise invent words. |
 | `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
-| `CloudflareClient.swift` | The same Whisper model through Cloudflare Workers AI, as an alternative to Groq, plus its chat models for AI cleanup. |
+| `CloudflareClient.swift` | Whisper large-v3-turbo through Cloudflare Workers AI, as an alternative to Groq, plus its chat models for AI cleanup. |
 | `ChatCompletion.swift` | The OpenAI-style chat request that both providers accept, for AI cleanup. |
 | `LocalWhisper.swift` | Optional offline transcription: converts the take to WAV with AVFoundation and runs `whisper-cli` directly (no shell). Cancelling or a timeout stops it. |
 | `PendingRecordings.swift` | Takes not transcribed yet: a private folder, left out of backups, emptied after 7 days. |
@@ -261,11 +261,12 @@ like "no" or "tego".
 
 ## Cost
 
-Groq bills whisper-large-v3-turbo at $0.04 per hour of audio, with a 10-second minimum per request
-(pricing as of September 2026, so check Groq's site). One thousand short dictations come to about
-$0.11.
+Groq bills whisper-large-v3 at $0.111 per hour of audio, with a 10-second minimum per request
+(pricing as of October 2026, so check Groq's site). One thousand short dictations come to about
+$0.31. Skryba used the cheaper turbo model ($0.04 per hour) until 1.6; the full one hears names and
+English terms in Polish speech better.
 
-Cloudflare lists the same model at $0.000513 per audio minute ($0.03 per hour), and its Workers
+Cloudflare has only the turbo model, at $0.000513 per audio minute ($0.03 per hour), and its Workers
 free allocation covers light use. Local Whisper costs nothing but your Mac's time.
 
 AI cleanup adds token costs. On Groq: $0.15/$0.60 per million input/output tokens for GPT-OSS

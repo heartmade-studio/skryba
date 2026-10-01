@@ -95,8 +95,9 @@ struct SettingsView: View {
                         saved: settings.cloudflareToken, status: $cloudflareTokenStatus, save: saveCloudflareToken
                     )
                     FootnoteText("""
-                        Create a token with the Workers AI permission. Cloudflare runs the same Whisper \
-                        model; audio, and text for AI cleanup, go to your Cloudflare account instead of Groq.
+                        Create a token with the Workers AI permission. Cloudflare runs Whisper's faster turbo \
+                        model, which mishears names more often than Groq's full one. Audio, and text for AI \
+                        cleanup, go to your Cloudflare account instead of Groq.
                         """)
                     Link("Get a free Workers AI token at dash.cloudflare.com", destination: URL(string: "https://dash.cloudflare.com/profile/api-tokens")!)
                         .font(.callout)
