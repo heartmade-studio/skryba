@@ -14,7 +14,7 @@ later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
 25 Swift files, about 3,400 lines including comments.
 
-**Status: 1.5.1.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
+**Status: 1.5.2.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
 
 ## Screenshots
