@@ -51,8 +51,16 @@ final class RecordingHUD {
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.ignoresMouseEvents = !style.isCancellable
-        position(panel)
-        panel.orderFrontRegardless()
+
+        // SwiftUI applies observable model changes on a later layout pass. Measuring the
+        // hosting view here can return the previous message's size, leaving long messages
+        // clipped by the panel. Size and show it on the next main-queue turn, after SwiftUI
+        // has had a chance to update its intrinsic content size.
+        DispatchQueue.main.async { [weak self, weak panel] in
+            guard let self, let panel, self.panel === panel, self.style != nil else { return }
+            self.position(panel)
+            panel.orderFrontRegardless()
+        }
     }
 
     func hide() {
@@ -82,6 +90,7 @@ final class RecordingHUD {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let visible = screen?.visibleFrame, let content = panel.contentView else { return }
+        content.layoutSubtreeIfNeeded()
         let size = content.fittingSize
         panel.setFrame(
             NSRect(x: visible.midX - size.width / 2, y: visible.minY + 28, width: size.width, height: size.height),
