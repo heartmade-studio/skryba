@@ -48,6 +48,47 @@ struct ChatRequest: Encodable, Sendable {
         return choice.message.content ?? ""
     }
 
+    /// What one reply took, for the log: token counts and the length of the hidden reasoning, never
+    /// any of its text. It tells a model that thought for long from a request that waited in a queue.
+    /// Decoded apart from the reply, so a provider's odd `usage` can't break the cleanup itself.
+    static func usageSummary(from data: Data) -> String? {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let reply = try? decoder.decode(UsageReply.self, from: data) else { return nil }
+        var parts: [String] = []
+        if let usage = reply.usage {
+            if let prompt = usage.promptTokens { parts.append("\(prompt) in") }
+            if let completion = usage.completionTokens { parts.append("\(completion) out") }
+            if let reasoning = usage.completionTokensDetails?.reasoningTokens { parts.append("\(reasoning) reasoning") }
+        }
+        // Cloudflare may not count reasoning tokens apart; the length of its reasoning field stands in.
+        let message = reply.choices?.first?.message
+        if let reasoning = message?.reasoningContent ?? message?.reasoning {
+            parts.append("reasoning \(reasoning.count) chars")
+        }
+        if let reason = reply.choices?.first?.finishReason { parts.append("finish \(reason)") }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+
+    private struct UsageReply: Decodable {
+        struct Usage: Decodable {
+            struct Details: Decodable { let reasoningTokens: Int? }
+            let promptTokens: Int?
+            let completionTokens: Int?
+            let completionTokensDetails: Details?
+        }
+        struct Choice: Decodable {
+            struct Message: Decodable {
+                let reasoningContent: String?
+                let reasoning: String?
+            }
+            let message: Message?
+            let finishReason: String?
+        }
+        let usage: Usage?
+        let choices: [Choice]?
+    }
+
     private struct Response: Decodable {
         struct Choice: Decodable {
             struct Message: Decodable { let content: String? }

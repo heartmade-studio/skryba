@@ -34,6 +34,9 @@ struct CloudflareClient: ChatClient {
     /// Docs: https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/
     func chat(_ request: ChatRequest) async throws -> String {
         let data = try await post(path: "ai/v1/chat/completions", body: try request.encoded(), timeout: ChatRequest.timeout, label: "chat \(request.model)")
+        if let usage = ChatRequest.usageSummary(from: data) {
+            Self.log.info("cloudflare chat usage: \(usage, privacy: .public)")
+        }
         return try ChatRequest.replyText(from: data)
     }
 
