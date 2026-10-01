@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Builds build/Skryba.app from the Swift package.
-#   scripts/build.sh            build only
+#   scripts/build.sh            build for this Mac only
 #   scripts/build.sh --install  build, copy to /Applications and launch
+#   scripts/build.sh --dmg      universal build (Apple Silicon and Intel), packed as build/Skryba.dmg
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+MODE="${1:-}"
 
 APP_NAME="Skryba"
 APP="build/$APP_NAME.app"
@@ -13,8 +16,11 @@ if [[ -z "${DEVELOPER_DIR:-}" && "$(xcode-select -p)" == *CommandLineTools* && -
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 
-swift build -c release
-BIN_DIR="$(swift build -c release --show-bin-path)"
+# A release DMG runs on both architectures; a local build only needs this Mac's.
+ARCHS=()
+[[ "$MODE" == "--dmg" ]] && ARCHS=(--arch arm64 --arch x86_64)
+swift build -c release ${ARCHS[@]+"${ARCHS[@]}"}
+BIN_DIR="$(swift build -c release ${ARCHS[@]+"${ARCHS[@]}"} --show-bin-path)"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -55,7 +61,18 @@ if grep -q '^Authority=Apple Development:' <<<"$SIGNATURE_INFO"; then
 fi
 echo "Built $APP (signed with: $IDENTITY)"
 
-if [[ "${1:-}" == "--install" ]]; then
+if [[ "$MODE" == "--dmg" ]]; then
+  # The usual drag-to-install window: the app next to a link to /Applications.
+  STAGE="$(mktemp -d)"
+  trap 'rm -rf "$STAGE"' EXIT
+  cp -R "$APP" "$STAGE/"
+  ln -s /Applications "$STAGE/Applications"
+  rm -f "build/$APP_NAME.dmg"
+  hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$STAGE" -format UDZO "build/$APP_NAME.dmg"
+  echo "Packed build/$APP_NAME.dmg ($(lipo -archs "$APP/Contents/MacOS/$APP_NAME"))"
+fi
+
+if [[ "$MODE" == "--install" ]]; then
   DEST="/Applications/$APP_NAME.app"
   STAGE="/Applications/.$APP_NAME.app.new"
   # Copy first: if this fails, the existing install is untouched.
