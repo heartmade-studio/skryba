@@ -7,10 +7,14 @@ struct SkrybaApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(controller: appDelegate.controller)
+            MenuContent(controller: appDelegate.controller, updates: appDelegate.updates)
         } label: {
             let controller = appDelegate.controller
-            if controller.phase == .idle, controller.pendingRecordings.items.isEmpty, let icon = NSImage.menuBarIcon {
+            if controller.phase != .idle || !controller.pendingRecordings.items.isEmpty {
+                Image(systemName: controller.menuBarSymbol)
+            } else if appDelegate.updates.availableVersion != nil {
+                Image(systemName: "arrow.down.circle.fill")
+            } else if let icon = NSImage.menuBarIcon {
                 Image(nsImage: icon)
             } else {
                 Image(systemName: controller.menuBarSymbol)
@@ -22,9 +26,11 @@ struct SkrybaApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let controller = AppController()
+    let updates = UpdateChecker()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller.start()
+        updates.start()
     }
 
     /// Opening Skryba again (Finder, Spotlight) while it runs shows Settings, the usual menu-bar-app behaviour.
@@ -35,11 +41,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         controller.shutdown()
+        updates.stop()
     }
 }
 
 struct MenuContent: View {
     let controller: AppController
+    let updates: UpdateChecker
 
     var body: some View {
         if controller.phase.isRecording {
@@ -87,6 +95,13 @@ struct MenuContent: View {
         }
 
         Divider()
+        if let version = updates.availableVersion {
+            Button("Update available: Skryba \(version)…") { updates.openDownload() }
+        }
+        Button(updates.isChecking ? "Checking for Updates…" : "Check for Updates…") {
+            Task { await updates.check(showResult: true) }
+        }
+        .disabled(updates.isChecking)
         Button("Settings…") { controller.openSettings() }
             .keyboardShortcut(",")
         Button("Quit Skryba") { NSApp.terminate(nil) }
