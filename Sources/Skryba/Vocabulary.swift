@@ -3,7 +3,7 @@ import Foundation
 /// The user's list of names and terms, used in two ways:
 ///
 /// 1. As Whisper's `prompt`. Whisper reads it as "text that came before", so it is only a soft nudge
-///    toward those spellings (and a weak one in the turbo model).
+///    toward those spellings (and a weak one in the turbo model Cloudflare runs).
 /// 2. As a deterministic fix-up afterwards: words that are a near miss for a term ("Hrtmade") are
 ///    replaced by it, keeping Polish case endings ("Hrtmadem" → "Heartmadem").
 struct Vocabulary {

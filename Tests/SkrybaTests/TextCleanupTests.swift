@@ -108,6 +108,11 @@ struct ChatReplyTests {
         #expect(summary?.contains("Myślę") == false)
     }
 
+    @Test func showsGroqsQueueAndGenerationTime() {
+        let json = #"{"choices":[{"message":{"content":"Tak."},"finish_reason":"stop"}],"usage":{"prompt_tokens":406,"completion_tokens":543,"queue_time":8.1234,"completion_time":0.9}}"#
+        #expect(ChatRequest.usageSummary(from: Data(json.utf8)) == "406 in, 543 out, queue 8123 ms, generation 900 ms, finish stop")
+    }
+
     @Test func oddUsageNeverBreaksTheReply() throws {
         let json = #"{"choices":[{"message":{"content":"Tak."},"finish_reason":"stop"}],"usage":{"prompt_tokens":"many"}}"#
         #expect(try reply(json) == "Tak.")

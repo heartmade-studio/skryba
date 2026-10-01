@@ -60,6 +60,10 @@ struct ChatRequest: Encodable, Sendable {
             if let prompt = usage.promptTokens { parts.append("\(prompt) in") }
             if let completion = usage.completionTokens { parts.append("\(completion) out") }
             if let reasoning = usage.completionTokensDetails?.reasoningTokens { parts.append("\(reasoning) reasoning") }
+            // Groq only: seconds waiting for the model, and generating. A slow reply with a short
+            // generation was a busy provider, not a model thinking for long.
+            if let queue = usage.queueTime { parts.append("queue \(Self.milliseconds(queue))") }
+            if let generation = usage.completionTime { parts.append("generation \(Self.milliseconds(generation))") }
         }
         // Cloudflare may not count reasoning tokens apart; the length of its reasoning field stands in.
         let message = reply.choices?.first?.message
@@ -70,12 +74,18 @@ struct ChatRequest: Encodable, Sendable {
         return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
+    private static func milliseconds(_ seconds: Double) -> String {
+        "\(Int((seconds * 1000).rounded())) ms"
+    }
+
     private struct UsageReply: Decodable {
         struct Usage: Decodable {
             struct Details: Decodable { let reasoningTokens: Int? }
             let promptTokens: Int?
             let completionTokens: Int?
             let completionTokensDetails: Details?
+            let queueTime: Double?
+            let completionTime: Double?
         }
         struct Choice: Decodable {
             struct Message: Decodable {

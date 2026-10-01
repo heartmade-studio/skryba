@@ -1,7 +1,8 @@
 import Foundation
 import os
 
-/// Cloudflare Workers AI, an alternative to Groq: the same Whisper model, and chat models for AI cleanup.
+/// Cloudflare Workers AI, an alternative to Groq: Whisper large-v3-turbo (Workers AI has no full
+/// large-v3), and chat models for AI cleanup.
 /// Docs: https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/
 struct CloudflareClient: ChatClient {
     static let model = "@cf/openai/whisper-large-v3-turbo"
