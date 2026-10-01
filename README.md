@@ -90,7 +90,8 @@ Skryba is free of malware"*. If you trust this build:
    **Open Anyway**. Confirm with your password.
 3. Click **Open Anyway** once more when macOS asks again.
 
-You do this once for each version you download. If you'd rather not bypass Gatekeeper for an app that asks for
+When a newer version is out, Skryba says so once and puts a download link in its menu (you can
+turn this check off in Settings → General). You do this once for each version you download. If you'd rather not bypass Gatekeeper for an app that asks for
 Microphone and Accessibility access, read the code and build it yourself instead. Then continue with
 [First launch](#first-launch).
 
@@ -171,7 +172,7 @@ with **Test**, and grant two permissions:
 ## Privacy
 
 Skryba has no servers, accounts, analytics or telemetry. It talks to the provider you chose:
-`api.groq.com` or `api.cloudflare.com`.
+`api.groq.com` or `api.cloudflare.com`, and once a day to `api.github.com` to check for updates.
 
 - **What leaves your Mac:** the audio of each take, plus your vocabulary list (sent as Whisper's
   prompt), to that one provider. With AI cleanup on, the transcript and your replacements also go
@@ -185,6 +186,10 @@ Skryba has no servers, accounts, analytics or telemetry. It talks to the provide
   left out of Time Machine) until they are transcribed. A take that couldn't be transcribed stays
   there until you transcribe or delete it from the menu, and for at most 7 days. Deleting a file on
   an SSD is not a secure erase.
+- **Update check:** once a day Skryba asks GitHub for its latest release, a request that carries
+  nothing about you or your dictations beyond what any web request does (your IP address). A newer
+  version shows up as a download link in the menu; nothing is downloaded or installed by itself.
+  Turn it off in Settings → General.
 - **Network:** an ephemeral URL session, so no cookies or HTTP cache are written to disk.
 - **Microphone:** it is on only during a take, and macOS shows its orange dot while it is.
 - **Accessibility** is a broad permission. Skryba uses it to notice the Fn key, to check which

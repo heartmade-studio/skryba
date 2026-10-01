@@ -43,6 +43,7 @@ final class AppController {
     let settings = Settings()
     let pendingRecordings = PendingRecordings()
     let network = NetworkMonitor()
+    let updates = UpdateCheck()
 
     @ObservationIgnored private let hotKey = HotKey()
     @ObservationIgnored private let fnKey = FnKey()
@@ -99,6 +100,8 @@ final class AppController {
         deleteExpiredRecordingsHourly()
         network.onReconnect = { [weak self] in self?.announcePendingRecordings() }
         network.start()
+        updates.onNewVersion = { [weak self] version in self?.announceUpdate(version) }
+        updates.start { [weak self] in self?.settings.checkForUpdates ?? false }
         hud.onCancel = { [weak self] in self?.cancelTranscription() }
         hotKey.onPress = { [weak self] in self?.startRecording() }
         hotKey.onRelease = { [weak self] in self?.stopRecording() }
@@ -578,6 +581,12 @@ final class AppController {
     }
 
     static let testDuration: TimeInterval = 4
+
+    /// A newer version is out: one quiet note, unless a take is in progress. The menu keeps the link.
+    private func announceUpdate(_ version: String) {
+        guard phase == .idle else { return }
+        notify("Skryba \(version) is available. Download it from the Skryba menu.")
+    }
 
     /// After a reconnect, a gentle reminder that recordings are waiting. Nothing is sent by itself.
     private func announcePendingRecordings() {

@@ -140,6 +140,18 @@ struct SettingsView: View {
                         launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
             }
+
+            Section {
+                Toggle("Check for updates once a day", isOn: $settings.checkForUpdates)
+                    .onChange(of: settings.checkForUpdates) { _, enabled in
+                        if !enabled { controller.updates.clear() }
+                    }
+            } footer: {
+                FootnoteText("""
+                    Skryba asks GitHub whether a newer version is out and shows a download link in its \
+                    menu. Nothing about you or your dictations is sent, and nothing is installed by itself.
+                    """)
+            }
         }
     }
 
