@@ -52,6 +52,9 @@ struct GroqClient: ChatClient {
             timeout: ChatRequest.timeout,
             label: "chat \(request.model)"
         )
+        if let usage = ChatRequest.usageSummary(from: data) {
+            Self.log.info("groq chat usage: \(usage, privacy: .public)")
+        }
         return try ChatRequest.replyText(from: data)
     }
 

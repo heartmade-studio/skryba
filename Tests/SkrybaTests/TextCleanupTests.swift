@@ -96,6 +96,23 @@ struct ChatReplyTests {
             try reply(#"{"choices":[{"message":{"content":"Przygotuj dokument i"},"finish_reason":"length"}]}"#)
         }
     }
+
+    @Test func summarisesUsageWithoutAnyText() {
+        let groq = #"{"choices":[{"message":{"content":"Tajne."},"finish_reason":"stop"}],"usage":{"prompt_tokens":412,"completion_tokens":980,"completion_tokens_details":{"reasoning_tokens":870}}}"#
+        #expect(ChatRequest.usageSummary(from: Data(groq.utf8)) == "412 in, 980 out, 870 reasoning, finish stop")
+
+        let cloudflare = #"{"choices":[{"message":{"content":"Tajne.","reasoning_content":"Myślę."},"finish_reason":"stop"}],"usage":{"prompt_tokens":412,"completion_tokens":30}}"#
+        let summary = ChatRequest.usageSummary(from: Data(cloudflare.utf8))
+        #expect(summary == "412 in, 30 out, reasoning 6 chars, finish stop")
+        #expect(summary?.contains("Tajne") == false)
+        #expect(summary?.contains("Myślę") == false)
+    }
+
+    @Test func oddUsageNeverBreaksTheReply() throws {
+        let json = #"{"choices":[{"message":{"content":"Tak."},"finish_reason":"stop"}],"usage":{"prompt_tokens":"many"}}"#
+        #expect(try reply(json) == "Tak.")
+        #expect(ChatRequest.usageSummary(from: Data(json.utf8)) == nil)
+    }
 }
 
 struct CleanupModelTests {
