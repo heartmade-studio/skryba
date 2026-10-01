@@ -157,9 +157,7 @@ private struct HUDView: View {
         case .info(let message):
             Image(systemName: "tray.full.fill")
                 .foregroundStyle(.orange)
-            Text(message)
-                .frame(maxWidth: 320, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+            WrapAtWidth(maxWidth: 320) { Text(message) }
         case .cleaningUp:
             ProgressView()
                 .controlSize(.small)
@@ -169,10 +167,27 @@ private struct HUDView: View {
         case .error(let message):
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
-            Text(message)
-                .frame(maxWidth: 320, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+            WrapAtWidth(maxWidth: 320) { Text(message) }
         }
+    }
+}
+
+/// Keeps a short message on one line and wraps a long one at `maxWidth`.
+///
+/// `.frame(maxWidth:)` alone caps the width but reports the height of the unwrapped single line,
+/// so the panel was sized for one line while the text drew two and spilled out of the pill.
+private struct WrapAtWidth: Layout {
+    var maxWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let text = subviews.first else { return .zero }
+        let limit = min(proposal.width ?? maxWidth, maxWidth)
+        let ideal = text.sizeThatFits(.unspecified)
+        return ideal.width <= limit ? ideal : text.sizeThatFits(ProposedViewSize(width: limit, height: nil))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: nil))
     }
 }
 
