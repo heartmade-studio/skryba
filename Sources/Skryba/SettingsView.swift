@@ -29,6 +29,8 @@ struct SettingsView: View {
     @State private var apiKeyStatus: CredentialStatus?
     @State private var cloudflareTokenDraft: String
     @State private var cloudflareTokenStatus: CredentialStatus?
+    @State private var localModelIDs: [String] = []
+    @State private var localModelStatus: String?
 
     enum CredentialStatus {
         case saved, failed
@@ -69,8 +71,9 @@ struct SettingsView: View {
                 }
             }
             .formStyle(.grouped)
-            .scrollDisabled(true)
-            .fixedSize(horizontal: false, vertical: true)
+            .scrollDisabled(tab != .cleanup)
+            .fixedSize(horizontal: false, vertical: tab != .cleanup)
+            .frame(height: tab == .cleanup ? 580 : nil)
 
             HeartmadeCredit()
                 .padding(.bottom, 16)
@@ -199,27 +202,53 @@ struct SettingsView: View {
 
     private var cleanupTab: some View {
         @Bindable var settings = controller.settings
+        let anyCleanupEnabled = settings.cloudCleanupEnabled || settings.localCleanupEnabled
         return Form {
             Section {
-                Toggle("Remove hesitations and apply replacements", isOn: $settings.cleanupEnabled)
-                if settings.cleanupEnabled {
+                Toggle("Clean up cloud transcriptions", isOn: $settings.cloudCleanupEnabled)
+                if settings.cloudCleanupEnabled {
                     switch settings.provider {
                     case .groq:
                         Picker("Model", selection: $settings.groqCleanupModel) { modelOptions(for: .groq) }
                     case .cloudflare:
                         Picker("Model", selection: $settings.cloudflareCleanupModel) { modelOptions(for: .cloudflare) }
                     case .local:
-                        EmptyView()
+                        FootnoteText("The cloud model is chosen under Settings → General when you use cloud transcription.")
                     }
                     if settings.provider != .local, !settings.isProviderConfigured {
                         FootnoteText(settings.setupHint)
                     }
                 }
             } footer: {
-                FootnoteText(cleanupFootnote)
+                FootnoteText("Cloud cleanup sends the transcript and replacements to the transcription provider in a second request. Turn it off for the fastest paste.")
             }
 
-            if settings.cleanupEnabled {
+            Section {
+                Toggle("Clean up Local Whisper transcriptions", isOn: $settings.localCleanupEnabled)
+                if settings.localCleanupEnabled {
+                    Text("Install LM Studio, load a chat model, then enable its local server on port 1234. Skryba sends cleanup text only to 127.0.0.1 on this Mac; it does not send local transcripts to Groq or Cloudflare.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Link("LM Studio server setup", destination: URL(string: "https://lmstudio.ai/docs/developer/core/server")!)
+                        .font(.callout)
+                    TextField("Model ID", text: $settings.localCleanupModel, prompt: Text("e.g. qwen2.5-7b-instruct"))
+                    HStack {
+                        Picker("Available models", selection: $settings.localCleanupModel) {
+                            Text("Choose from LM Studio…").tag("")
+                            if !settings.localCleanupModel.isEmpty && !localModelIDs.contains(settings.localCleanupModel) {
+                                Text(settings.localCleanupModel).tag(settings.localCleanupModel)
+                            }
+                            ForEach(localModelIDs, id: \.self) { Text($0).tag($0) }
+                        }
+                        Button("Refresh") { refreshLocalModels() }
+                    }
+                    if let localModelStatus { FootnoteText(localModelStatus) }
+                    if settings.localCleanupModel.isEmpty { FootnoteText("Choose a model to enable local cleanup.") }
+                }
+            } footer: {
+                FootnoteText("Local cleanup can also take time. If it fails or changes anything beyond hesitations and your replacements, Skryba uses the plain transcript.")
+            }
+
+            if anyCleanupEnabled {
                 Section {
                     TextEditor(text: $settings.replacements)
                         .font(.callout.monospaced())
@@ -292,24 +321,16 @@ struct SettingsView: View {
         ForEach(TextCleanup.Model.models(for: provider)) { Text($0.displayName).tag($0) }
     }
 
-    /// Cleanup runs at the transcription provider, so the footnote says which one, and what it costs there.
-    private var cleanupFootnote: String {
-        let settings = controller.settings
-        let what = """
-            removes hesitations like “yyy” and “eee”, and applies your replacements. It changes nothing \
-            else; if it does, the plain transcript is pasted. It's a second request per dictation, so it's \
-            a little slower
-            """
-        switch settings.provider {
-        case .groq:
-            return "A Groq language model \(what) and costs a little: roughly $0.40 per 1,000 dictations with GPT-OSS, $0.80 with Qwen."
-        case .cloudflare:
-            return """
-                A Cloudflare Workers AI language model \(what). The free daily allocation covers about 250 \
-                dictations with GPT-OSS, 500 with Gemma and 1,000 with Mistral, which doesn't think first.
-                """
-        case .local:
-            return "AI cleanup needs Groq or Cloudflare as the provider. With local Whisper, nothing leaves this Mac."
+    @MainActor
+    private func refreshLocalModels() {
+        localModelStatus = "Checking LM Studio…"
+        Task {
+            do {
+                localModelIDs = try await LocalChatClient.availableModels()
+                localModelStatus = localModelIDs.isEmpty ? "No models found. Load a model in LM Studio and refresh." : nil
+            } catch {
+                localModelStatus = error.localizedDescription
+            }
         }
     }
 

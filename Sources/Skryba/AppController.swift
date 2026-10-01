@@ -13,6 +13,11 @@ import os
 /// cancels, it stays there for a manual retry from the menu.
 @MainActor @Observable
 final class AppController {
+    private struct Transcript {
+        let text: String
+        let provider: Settings.TranscriptionProvider
+    }
+
     enum Phase: Equatable {
         case idle, transcribing, pasting
         case recording(RecordingMode)
@@ -409,6 +414,7 @@ final class AppController {
         job = nil
 
         var text: String
+        var transcriptionProvider: Settings.TranscriptionProvider
         switch result {
         case .failure(let stop):
             if audio.saved == nil { AudioRecorder.remove(audio.url) }
@@ -417,20 +423,31 @@ final class AppController {
         case .success(let transcript):
             // Transcribed, even if to nothing: the audio has done its job.
             if let saved = audio.saved { pendingRecordings.remove(saved) } else { AudioRecorder.remove(audio.url) }
+            transcriptionProvider = transcript.provider
             let invented = Hallucinations.isLikely(
-                transcript, prompt: vocabulary.prompt, voicedDuration: audio.voicedDuration
+                transcript.text, prompt: vocabulary.prompt, voicedDuration: audio.voicedDuration
             )
-            text = invented ? "" : vocabulary.correct(transcript)
+            text = invented ? "" : vocabulary.correct(transcript.text)
         }
 
         var cleanupWarning: String?
         let raw = text
-        // Cleanup runs at the provider that transcribes. With local Whisper, offline, or without
-        // credentials it's skipped, and the plain text goes out.
-        if !text.isEmpty, settings.cleanupEnabled, let model = settings.cleanupModel,
-           settings.isProviderConfigured, network.isOnline {
+        // Use the provider that actually succeeded. A local fallback's transcript never goes to cloud cleanup.
+        let route = CleanupRoute.resolve(
+            transcriptionProvider: transcriptionProvider,
+            cloudEnabled: settings.cloudCleanupEnabled,
+            localEnabled: settings.localCleanupEnabled
+        )
+        let localTranscript = route == .local
+        let cloudModel = localTranscript ? nil : cleanupModel(for: transcriptionProvider)
+        let canClean = switch route {
+        case .skip: false
+        case .local: !settings.localCleanupModel.isEmpty
+        case .cloud: cloudModel != nil && settings.isProviderConfigured && network.isOnline
+        }
+        if !text.isEmpty, canClean {
             hud.show(.cleaningUp)
-            (text, cleanupWarning) = await cleanUp(text, model: model, vocabulary: vocabulary)
+            (text, cleanupWarning) = await cleanUp(text, cloudModel: cloudModel, local: localTranscript, vocabulary: vocabulary)
         }
 
         hud.hide()
@@ -461,7 +478,7 @@ final class AppController {
 
     /// Local Whisper when it's the provider. Otherwise the cloud first (unless we know we're offline),
     /// then local Whisper if the user turned it on as a fallback.
-    private func transcript(of audio: Audio, vocabulary: Vocabulary) async -> Result<String, Stop> {
+    private func transcript(of audio: Audio, vocabulary: Vocabulary) async -> Result<Transcript, Stop> {
         let provider = settings.provider
         if provider == .local {
             return await transcribeLocally(audio, vocabulary: vocabulary)
@@ -472,11 +489,11 @@ final class AppController {
             stop = .failed(settings.setupHint)
         } else if network.isOnline {
             do {
-                return .success(try await Retry.attempts(
+                return .success(.init(text: try await Retry.attempts(
                     within: Retry.deadline(forClipOf: audio.duration),
                     onAttempt: { hud.show(.transcribing(attempt: $0)) },
                     operation: cloudTranscription(of: audio.url, with: provider, vocabulary: vocabulary)
-                ))
+                ), provider: provider))
             } catch where Retry.isCancellation(error) {
                 return .failure(.cancelled)
             } catch where Retry.isOffline(error) {
@@ -491,13 +508,13 @@ final class AppController {
         return await transcribeLocally(audio, vocabulary: vocabulary)
     }
 
-    private func transcribeLocally(_ audio: Audio, vocabulary: Vocabulary) async -> Result<String, Stop> {
+    private func transcribeLocally(_ audio: Audio, vocabulary: Vocabulary) async -> Result<Transcript, Stop> {
         hud.show(.transcribingLocally)
         do {
             let text = try await settings.localWhisper.transcribe(
                 fileURL: audio.url, duration: audio.duration, language: settings.language, prompt: vocabulary.prompt
             )
-            return .success(text)
+            return .success(.init(text: text, provider: .local))
         } catch where Retry.isCancellation(error) {
             return .failure(.cancelled)
         } catch {
@@ -588,18 +605,49 @@ final class AppController {
 
     /// Returns the cleaned-up text, or `text` unchanged plus a warning if cleanup fails or strays
     /// from it. The dictation itself must never be lost to this optional step.
-    private func cleanUp(_ text: String, model: TextCleanup.Model, vocabulary: Vocabulary) async -> (text: String, warning: String?) {
+    private func cleanupModel(for provider: Settings.TranscriptionProvider) -> TextCleanup.Model? {
+        switch provider {
+        case .groq: settings.groqCleanupModel
+        case .cloudflare: settings.cloudflareCleanupModel
+        case .local: nil
+        }
+    }
+
+    private func cleanUp(
+        _ text: String, cloudModel: TextCleanup.Model?, local: Bool, vocabulary: Vocabulary
+    ) async -> (text: String, warning: String?) {
         // One snapshot of the rules, so a change in Settings during the request can't mix them.
         let replacements = Replacements(settings.replacements)
-        // Every cleanup model runs at Groq or Cloudflare.
-        let client: any ChatClient = model.provider == .groq ? GroqClient(apiKey: settings.apiKey) : settings.cloudflare
-        let cleanup = TextCleanup(client: client, model: model)
+        let localModel = settings.localCleanupModel
+        let client: any ChatClient
+        let cloudCleanup: TextCleanup?
+        if local {
+            client = LocalChatClient(model: localModel)
+            cloudCleanup = nil
+        } else {
+            guard let cloudModel else { return (text, nil) }
+            client = cloudModel.provider == .groq ? GroqClient(apiKey: settings.apiKey) : settings.cloudflare
+            cloudCleanup = TextCleanup(client: client, model: cloudModel)
+        }
         do {
             // Optional, so it gets little patience: past the limit the plain transcript goes out.
             let language = settings.language
             let task = Task {
                 try await Retry.run(
-                    { try await cleanup.clean(text, replacements: replacements, language: language) },
+                    {
+                        if local {
+                            let request = ChatRequest(
+                                model: localModel,
+                                messages: [
+                                    .init(role: "system", content: TextCleanup.systemPrompt(replacements: replacements, language: language)),
+                                    .init(role: "user", content: TextCleanup.userMessage(text)),
+                                ], temperature: 0.2, maxCompletionTokens: min(16_384, 4_096 + text.count)
+                            )
+                            return TextCleanup.unwrap(try await client.chat(request))
+                        }
+                        guard let cloudCleanup else { return text }
+                        return try await cloudCleanup.clean(text, replacements: replacements, language: language)
+                    },
                     until: .now + Self.cleanupDeadline(for: text)
                 )
             }

@@ -35,6 +35,15 @@ struct TextCleanupPromptTests {
     }
 }
 
+struct CleanupRouteTests {
+    @Test func localFallbackAlwaysUsesTheLocalCleanupRoute() {
+        #expect(CleanupRoute.resolve(transcriptionProvider: .local, cloudEnabled: true, localEnabled: true) == .local)
+        #expect(CleanupRoute.resolve(transcriptionProvider: .local, cloudEnabled: true, localEnabled: false) == .skip)
+        #expect(CleanupRoute.resolve(transcriptionProvider: .groq, cloudEnabled: true, localEnabled: true) == .cloud)
+        #expect(CleanupRoute.resolve(transcriptionProvider: .cloudflare, cloudEnabled: false, localEnabled: true) == .skip)
+    }
+}
+
 struct TextCleanupGuardTests {
     let replacements = Replacements("""
         claude md → CLAUDE.md
@@ -115,5 +124,32 @@ struct CleanupModelTests {
         #expect(try json(.gemma).contains(#""chat_template_kwargs":{"enable_thinking":true}"#))
         #expect(try json(.qwen).contains(#""reasoning_effort":"default""#))
         #expect(try !json(.mistral).contains("reasoning"))
+    }
+}
+
+struct LocalChatClientTests {
+    @Test func localEndpointsAreFixedToLoopback() {
+        #expect(LocalChatClient.isLoopback(LocalChatClient.endpoint))
+        #expect(LocalChatClient.isLoopback(LocalChatClient.modelsEndpoint))
+        #expect(!LocalChatClient.isLoopback(URL(string: "http://192.168.1.4:1234/v1/chat/completions")!))
+        #expect(!LocalChatClient.isLoopback(URL(string: "https://127.0.0.1:1234/v1/chat/completions")!))
+        #expect(!LocalChatClient.isLoopback(URL(string: "http://127.0.0.1:1235/v1/chat/completions")!))
+    }
+
+    @Test func readsAndSortsLMStudioModelIDs() throws {
+        let json = #"{"data":[{"id":"z-model"},{"id":"a-model"}]}"#
+        #expect(try LocalChatClient.modelIDs(from: Data(json.utf8)) == ["a-model", "z-model"])
+    }
+
+    @Test func encodesTheLMStudioMaxTokensField() throws {
+        let request = ChatRequest(
+            model: "ignored-cloud-model", messages: [.init(role: "user", content: "transcript")],
+            temperature: 0.2, maxCompletionTokens: 321,
+            reasoningEffort: nil, includeReasoning: nil, chatTemplateKwargs: nil
+        )
+        let object = try #require(JSONSerialization.jsonObject(with: LocalChatClient.encodedBody(request, model: "local-model")) as? [String: Any])
+        #expect(object["model"] as? String == "local-model")
+        #expect(object["max_tokens"] as? Int == 321)
+        #expect(object["max_completion_tokens"] == nil)
     }
 }

@@ -46,8 +46,16 @@ final class Settings {
         didSet { defaults.set(playSounds, forKey: Key.playSounds) }
     }
     /// Off by default: it adds a second request per dictation, so it's slower and costs a little more.
-    var cleanupEnabled: Bool {
-        didSet { defaults.set(cleanupEnabled, forKey: Key.cleanupEnabled) }
+    var cloudCleanupEnabled: Bool {
+        didSet { defaults.set(cloudCleanupEnabled, forKey: Key.cleanupEnabled) }
+    }
+    /// Separate from cloud cleanup: local Whisper's transcript is sent only to LM Studio on loopback.
+    var localCleanupEnabled: Bool {
+        didSet { defaults.set(localCleanupEnabled, forKey: Key.localCleanupEnabled) }
+    }
+    /// LM Studio's OpenAI-compatible model ID. Empty lets the user discover and select one.
+    var localCleanupModel: String {
+        didSet { defaults.set(localCleanupModel, forKey: Key.localCleanupModel) }
     }
     /// The cleanup model is chosen per provider, so switching providers keeps each choice.
     var groqCleanupModel: TextCleanup.Model {
@@ -98,16 +106,6 @@ final class Settings {
         isProviderConfigured || usesLocalFallback
     }
 
-    /// AI cleanup runs at the provider that transcribes, so the text goes nowhere the audio didn't.
-    /// None for local Whisper: its text stays on this Mac.
-    var cleanupModel: TextCleanup.Model? {
-        switch provider {
-        case .groq: groqCleanupModel
-        case .cloudflare: cloudflareCleanupModel
-        case .local: nil
-        }
-    }
-
     /// What to tell the user when the provider isn't set up.
     var setupHint: String {
         provider == .local
@@ -146,6 +144,8 @@ final class Settings {
         static let vocabulary = "vocabulary"
         static let playSounds = "playSounds"
         static let cleanupEnabled = "cleanupEnabled"
+        static let localCleanupEnabled = "localCleanupEnabled"
+        static let localCleanupModel = "localCleanupModel"
         static let cleanupModel = "cleanupModel" // Groq's; the name predates Cloudflare
         static let cloudflareCleanupModel = "cloudflareCleanupModel"
         static let replacements = "replacements"
@@ -187,7 +187,9 @@ final class Settings {
         language = defaults.string(forKey: Key.language) ?? Self.systemLanguage
         vocabulary = defaults.string(forKey: Key.vocabulary) ?? ""
         playSounds = defaults.object(forKey: Key.playSounds) as? Bool ?? true
-        cleanupEnabled = defaults.bool(forKey: Key.cleanupEnabled)
+        cloudCleanupEnabled = defaults.bool(forKey: Key.cleanupEnabled) // Keep existing installs' setting.
+        localCleanupEnabled = defaults.bool(forKey: Key.localCleanupEnabled)
+        localCleanupModel = defaults.string(forKey: Key.localCleanupModel) ?? ""
         groqCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cleanupModel), or: .gptOss)
         cloudflareCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cloudflareCleanupModel), or: .cloudflareGptOss)
         replacements = defaults.string(forKey: Key.replacements) ?? ""

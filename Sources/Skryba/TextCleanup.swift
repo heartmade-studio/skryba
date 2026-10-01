@@ -1,7 +1,24 @@
 import Foundation
 
+/// Cleanup follows the provider that actually produced this transcript, including local fallback.
+enum CleanupRoute: Equatable {
+    case skip, cloud, local
+
+    static func resolve(
+        transcriptionProvider: Settings.TranscriptionProvider,
+        cloudEnabled: Bool,
+        localEnabled: Bool
+    ) -> CleanupRoute {
+        switch transcriptionProvider {
+        case .groq, .cloudflare: cloudEnabled ? .cloud : .skip
+        case .local: localEnabled ? .local : .skip
+        }
+    }
+}
+
 /// Optional second pass: a chat model removes hesitations ("yyy", "eee") and applies the user's
-/// `Replacements` ("claude md" → "CLAUDE.md"). Nothing else. It runs at the provider that transcribes.
+/// `Replacements` ("claude md" → "CLAUDE.md"). Nothing else. Cloud text stays with its provider;
+/// Local Whisper text uses LM Studio on loopback when local cleanup is enabled.
 ///
 /// A language model can still misbehave: answer a dictated question, reword it, or drop a word.
 /// `isAllowed` checks that the reply made only those two kinds of change, and any failure falls back
@@ -27,7 +44,7 @@ struct TextCleanup {
             }
         }
 
-        /// Where the model runs. Local Whisper has no cleanup: its text stays on this Mac.
+        /// Where the cloud model runs. Local Whisper uses a separate LM Studio model when enabled.
         var provider: Settings.TranscriptionProvider {
             switch self {
             case .gptOss, .qwen: .groq
