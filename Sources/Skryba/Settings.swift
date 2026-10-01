@@ -45,6 +45,10 @@ final class Settings {
     var playSounds: Bool {
         didSet { defaults.set(playSounds, forKey: Key.playSounds) }
     }
+    /// On by default: once a day, ask GitHub whether a newer Skryba is out; see `UpdateCheck`.
+    var checkForUpdates: Bool {
+        didSet { defaults.set(checkForUpdates, forKey: Key.checkForUpdates) }
+    }
     /// Off by default: it adds a second request per dictation, so it's slower and costs a little more.
     var cleanupEnabled: Bool {
         didSet { defaults.set(cleanupEnabled, forKey: Key.cleanupEnabled) }
@@ -145,6 +149,7 @@ final class Settings {
         static let language = "language"
         static let vocabulary = "vocabulary"
         static let playSounds = "playSounds"
+        static let checkForUpdates = "checkForUpdates"
         static let cleanupEnabled = "cleanupEnabled"
         static let cleanupModel = "cleanupModel" // Groq's; the name predates Cloudflare
         static let cloudflareCleanupModel = "cloudflareCleanupModel"
@@ -187,6 +192,7 @@ final class Settings {
         language = defaults.string(forKey: Key.language) ?? Self.systemLanguage
         vocabulary = defaults.string(forKey: Key.vocabulary) ?? ""
         playSounds = defaults.object(forKey: Key.playSounds) as? Bool ?? true
+        checkForUpdates = defaults.object(forKey: Key.checkForUpdates) as? Bool ?? true
         cleanupEnabled = defaults.bool(forKey: Key.cleanupEnabled)
         groqCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cleanupModel), or: .gptOss)
         cloudflareCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cloudflareCleanupModel), or: .cloudflareGptOss)

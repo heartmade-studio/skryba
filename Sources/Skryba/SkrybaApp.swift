@@ -87,6 +87,9 @@ struct MenuContent: View {
         }
 
         Divider()
+        if controller.settings.checkForUpdates, let version = controller.updates.available {
+            Button("Download Skryba \(version)…") { NSWorkspace.shared.open(UpdateCheck.downloadPage) }
+        }
         Button("Settings…") { controller.openSettings() }
             .keyboardShortcut(",")
         Button("Quit Skryba") { NSApp.terminate(nil) }
