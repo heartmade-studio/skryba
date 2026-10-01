@@ -71,6 +71,15 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Quit Skryba mid-take. The mic dot disappears. At the next launch
       `ls "$TMPDIR/pl.heartmade.skryba"` shows no files (or the folder is missing).
 
+## HUD layout
+
+- [ ] Show a short HUD state, then cancel a recording. The full “Cancelled. The recording is saved
+      in the Skryba menu.” message stays inside the black pill, wraps as needed, and does not
+      overlap the app underneath.
+- [ ] Show a short state, then start recording while offline. The second-line note appears inside
+      the pill without clipping; when it disappears on the next online take, the pill shrinks and
+      stays near the bottom centre of the active screen.
+
 ## Offline and bad connections
 
 - [ ] Turn Wi-Fi off. Hold Fn: the HUD shows *Offline · will be saved for later* under *Listening…*.

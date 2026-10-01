@@ -51,8 +51,16 @@ final class RecordingHUD {
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.ignoresMouseEvents = !style.isCancellable
-        position(panel)
-        panel.orderFrontRegardless()
+
+        // SwiftUI applies observable model changes on a later layout pass. Measuring the
+        // hosting view here can return the previous message's size, leaving long messages
+        // clipped by the panel. Size and show it on the next main-queue turn, after SwiftUI
+        // has had a chance to update its intrinsic content size.
+        DispatchQueue.main.async { [weak self, weak panel] in
+            guard let self, let panel, self.panel === panel, self.style != nil else { return }
+            self.position(panel)
+            panel.orderFrontRegardless()
+        }
     }
 
     func hide() {
@@ -82,6 +90,7 @@ final class RecordingHUD {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let visible = screen?.visibleFrame, let content = panel.contentView else { return }
+        content.layoutSubtreeIfNeeded()
         let size = content.fittingSize
         panel.setFrame(
             NSRect(x: visible.midX - size.width / 2, y: visible.minY + 28, width: size.width, height: size.height),
@@ -148,9 +157,7 @@ private struct HUDView: View {
         case .info(let message):
             Image(systemName: "tray.full.fill")
                 .foregroundStyle(.orange)
-            Text(message)
-                .frame(maxWidth: 320, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+            WrapAtWidth(maxWidth: 320) { Text(message) }
         case .cleaningUp:
             ProgressView()
                 .controlSize(.small)
@@ -160,10 +167,27 @@ private struct HUDView: View {
         case .error(let message):
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
-            Text(message)
-                .frame(maxWidth: 320, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+            WrapAtWidth(maxWidth: 320) { Text(message) }
         }
+    }
+}
+
+/// Keeps a short message on one line and wraps a long one at `maxWidth`.
+///
+/// `.frame(maxWidth:)` alone caps the width but reports the height of the unwrapped single line,
+/// so the panel was sized for one line while the text drew two and spilled out of the pill.
+private struct WrapAtWidth: Layout {
+    var maxWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let text = subviews.first else { return .zero }
+        let limit = min(proposal.width ?? maxWidth, maxWidth)
+        let ideal = text.sizeThatFits(.unspecified)
+        return ideal.width <= limit ? ideal : text.sizeThatFits(ProposedViewSize(width: limit, height: nil))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: nil))
     }
 }
 
