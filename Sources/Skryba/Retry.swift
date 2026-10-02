@@ -21,7 +21,7 @@ enum Retry {
     }
 
     struct TimedOut: LocalizedError {
-        var errorDescription: String? { "The provider didn't answer in time." }
+        var errorDescription: String? { "Skryba stopped waiting before a response arrived." }
     }
 
     /// Runs `operation` until it succeeds, up to `maximumAttempts` times, all within `deadline`.
@@ -30,6 +30,7 @@ enum Retry {
     static func attempts<T: Sendable>(
         within deadline: Duration,
         onAttempt: (Int) -> Void = { _ in },
+        onAttemptFailure: (Int, Duration, Error) -> Void = { _, _, _ in },
         operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
         let clock = ContinuousClock()
@@ -37,9 +38,11 @@ enum Retry {
         var attempt = 1
         while true {
             onAttempt(attempt)
+            let attemptStarted = clock.now
             do {
                 return try await run(operation, until: min(end, clock.now + deadline / 2))
             } catch {
+                onAttemptFailure(attempt, clock.now - attemptStarted, error)
                 // Another attempt only if it could still get a fair share of the time.
                 let next = clock.now + delay(after: attempt)
                 guard attempt < maximumAttempts, isTransient(error) || error is TimedOut,
@@ -48,6 +51,15 @@ enum Retry {
                 attempt += 1
             }
         }
+    }
+
+    /// A safe diagnostic label: never includes provider response text, a transcript, or credentials.
+    static func failureKind(for error: Error) -> String {
+        if error is TimedOut { return "app_deadline" }
+        if isCancellation(error) { return "cancelled" }
+        if let error = error as? URLError { return "url_error_\(error.code.rawValue)" }
+        if case SkrybaError.api(_, let status, _) = error { return "http_status_\(status)" }
+        return "other_error"
     }
 
     /// Runs `operation`, cancelling it at `limit`. A request that keeps trickling bytes never hits
