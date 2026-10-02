@@ -23,6 +23,13 @@ final class RecordingHUD {
             default: false
             }
         }
+
+        var isDismissible: Bool {
+            switch self {
+            case .info, .error: true
+            default: false
+            }
+        }
     }
 
     @Observable
@@ -31,6 +38,7 @@ final class RecordingHUD {
         /// A second, smaller line, such as "Offline · will be saved".
         var note: String?
         var onCancel: () -> Void = {}
+        var onDismiss: () -> Void = {}
     }
 
     private let model = Model()
@@ -42,6 +50,12 @@ final class RecordingHUD {
         set { model.onCancel = newValue }
     }
 
+    /// Called when the user dismisses a transient message.
+    var onDismiss: () -> Void {
+        get { model.onDismiss }
+        set { model.onDismiss = newValue }
+    }
+
     private(set) var style: Style?
 
     func show(_ style: Style, note: String? = nil) {
@@ -50,7 +64,7 @@ final class RecordingHUD {
         model.note = note
         let panel = panel ?? makePanel()
         self.panel = panel
-        panel.ignoresMouseEvents = !style.isCancellable
+        panel.ignoresMouseEvents = !(style.isCancellable || style.isDismissible)
 
         // SwiftUI applies observable model changes on a later layout pass. Measuring the
         // hosting view here can return the previous message's size, leaving long messages
@@ -103,22 +117,39 @@ private struct HUDView: View {
     let model: RecordingHUD.Model
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                content
+        ZStack(alignment: .topTrailing) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    content
+                }
+                if let note = model.note {
+                    Text(note)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.75))
+                }
             }
-            if let note = model.note {
-                Text(note)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.75))
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.white)
+            .padding(.trailing, model.style.isDismissible ? 12 : 0)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(8) // room for the shadow
+
+            if model.style.isDismissible {
+                Button { model.onDismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 20, height: 20)
+                        .background(.gray.opacity(0.9), in: Circle())
+                        .overlay(Circle().stroke(.white.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss message")
+                .offset(x: 5, y: -4)
             }
         }
-        .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .padding(8) // room for the shadow
         .fixedSize()
     }
 
@@ -157,7 +188,7 @@ private struct HUDView: View {
         case .info(let message):
             Image(systemName: "tray.full.fill")
                 .foregroundStyle(.orange)
-            WrapAtWidth(maxWidth: 320) { Text(message) }
+            singleLineMessage(message)
         case .cleaningUp:
             ProgressView()
                 .controlSize(.small)
@@ -167,27 +198,15 @@ private struct HUDView: View {
         case .error(let message):
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
-            WrapAtWidth(maxWidth: 320) { Text(message) }
+            singleLineMessage(message)
         }
     }
-}
 
-/// Keeps a short message on one line and wraps a long one at `maxWidth`.
-///
-/// `.frame(maxWidth:)` alone caps the width but reports the height of the unwrapped single line,
-/// so the panel was sized for one line while the text drew two and spilled out of the pill.
-private struct WrapAtWidth: Layout {
-    var maxWidth: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        guard let text = subviews.first else { return .zero }
-        let limit = min(proposal.width ?? maxWidth, maxWidth)
-        let ideal = text.sizeThatFits(.unspecified)
-        return ideal.width <= limit ? ideal : text.sizeThatFits(ProposedViewSize(width: limit, height: nil))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: nil))
+    private func singleLineMessage(_ message: String) -> some View {
+        Text(message)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 320, alignment: .leading)
     }
 }
 

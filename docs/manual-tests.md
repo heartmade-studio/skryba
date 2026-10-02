@@ -73,6 +73,7 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## HUD layout
 
+- [ ] Trigger a cleanup warning (for example, disable network during cleanup): the notice remains on one line, its × at the upper-right closes it immediately, and typing focus stays in the original app.
 - [ ] Show a short HUD state, then cancel a recording. The full “Cancelled. The recording is saved
       in the Skryba menu.” message stays inside the black pill, wraps as needed, and does not
       overlap the app underneath.
