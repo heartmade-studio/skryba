@@ -32,6 +32,15 @@ struct RetryTests {
         #expect(Retry.deadline(forClipOf: 5) == .seconds(12.5))
         #expect(Retry.deadline(forClipOf: 300) == .seconds(42))
     }
+
+    @Test func failureDiagnosticsDistinguishAppTimeoutsFromTransportAndHTTPFailures() {
+        #expect(Retry.failureKind(for: Retry.TimedOut()) == "app_deadline")
+        #expect(Retry.failureKind(for: URLError(.networkConnectionLost)) == "url_error_-1005")
+        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 503, message: "private response")) == "http_status_503")
+        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 0, message: "No response.")) == "no_http_status")
+        #expect(Retry.failureKind(for: CancellationError()) == "cancelled")
+        #expect(Retry.milliseconds(.milliseconds(1234) + .microseconds(500)) == 1234)
+    }
 }
 
 /// Timed: the whole cloud attempt, retries included, must end by its deadline, whatever the network does.
@@ -45,9 +54,15 @@ struct RetryDeadlineTests {
 
     @Test func aStalledRequestGivesUpAtTheDeadline() async {
         let started = ContinuousClock.now
+        var failures: [String] = []
         await #expect(throws: Retry.TimedOut.self) {
-            try await Retry.attempts(within: .milliseconds(600), operation: Self.stalled)
+            try await Retry.attempts(
+                within: .milliseconds(600),
+                onAttemptFailure: { _, _, error in failures.append(Retry.failureKind(for: error)) },
+                operation: Self.stalled
+            )
         }
+        #expect(failures.contains("app_deadline"))
         #expect(ContinuousClock.now - started < .milliseconds(900))
     }
 

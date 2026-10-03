@@ -477,7 +477,17 @@ final class AppController {
             do {
                 return .success(try await Retry.attempts(
                     within: Retry.deadline(forClipOf: audio.duration),
-                    onAttempt: { hud.show(.transcribing(attempt: $0)) },
+                    onAttempt: { attempt in
+                        hud.show(.transcribing(attempt: attempt))
+                        Self.log.info(
+                            "cloud transcription request started provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public)"
+                        )
+                    },
+                    onAttemptFailure: { attempt, elapsed, error in
+                        Self.log.notice(
+                            "cloud transcription request failed provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public) elapsed_ms=\(Retry.milliseconds(elapsed), privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
+                        )
+                    },
                     operation: cloudTranscription(of: audio.url, with: provider, vocabulary: vocabulary)
                 ))
             } catch where Retry.isCancellation(error) {
@@ -485,7 +495,9 @@ final class AppController {
             } catch where Retry.isOffline(error) {
                 stop = .offline
             } catch {
-                Self.log.notice("cloud transcription failed: \(error.localizedDescription, privacy: .public)")
+                Self.log.notice(
+                    "cloud transcription failed provider=\(provider.rawValue, privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
+                )
                 stop = .failed(error.localizedDescription)
             }
         }
@@ -603,6 +615,7 @@ final class AppController {
         // Every cleanup model runs at Groq or Cloudflare.
         let client: any ChatClient = model.provider == .groq ? GroqClient(apiKey: settings.apiKey) : settings.cloudflare
         let cleanup = TextCleanup(client: client, model: model)
+        let started = ContinuousClock.now
         do {
             // Optional, so it gets little patience: past the limit the plain transcript goes out.
             let language = settings.language
@@ -627,7 +640,9 @@ final class AppController {
             Self.log.notice("cleanup skipped by the user")
             return (text, nil)
         } catch {
-            Self.log.error("cleanup failed: \(error.localizedDescription, privacy: .public)")
+            Self.log.error(
+                "cleanup failed provider=\(model.provider.rawValue, privacy: .public) elapsed_ms=\(Retry.milliseconds(ContinuousClock.now - started), privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
+            )
             return (text, "AI cleanup skipped. \(error.localizedDescription)")
         }
     }
