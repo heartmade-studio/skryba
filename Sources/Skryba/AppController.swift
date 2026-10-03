@@ -484,9 +484,8 @@ final class AppController {
                         )
                     },
                     onAttemptFailure: { attempt, elapsed, error in
-                        let elapsedText = elapsed.formatted(.units(allowed: [.milliseconds], fractionalPart: .show(length: 1)))
                         Self.log.notice(
-                            "cloud transcription request failed provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public) elapsed=\(elapsedText, privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
+                            "cloud transcription request failed provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public) elapsed_ms=\(Retry.milliseconds(elapsed), privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
                         )
                     },
                     operation: cloudTranscription(of: audio.url, with: provider, vocabulary: vocabulary)
@@ -641,9 +640,8 @@ final class AppController {
             Self.log.notice("cleanup skipped by the user")
             return (text, nil)
         } catch {
-            let elapsed = (ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds], fractionalPart: .show(length: 1)))
             Self.log.error(
-                "cleanup failed provider=\(model.provider.rawValue, privacy: .public) elapsed=\(elapsed, privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
+                "cleanup failed provider=\(model.provider.rawValue, privacy: .public) elapsed_ms=\(Retry.milliseconds(ContinuousClock.now - started), privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
             )
             return (text, "AI cleanup skipped. \(error.localizedDescription)")
         }

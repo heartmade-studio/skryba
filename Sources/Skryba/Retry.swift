@@ -58,8 +58,14 @@ enum Retry {
         if error is TimedOut { return "app_deadline" }
         if isCancellation(error) { return "cancelled" }
         if let error = error as? URLError { return "url_error_\(error.code.rawValue)" }
-        if case SkrybaError.api(_, let status, _) = error { return "http_status_\(status)" }
+        // Status 0: the client gave up before any HTTP status (no reply, an invalid account ID).
+        if case SkrybaError.api(_, let status, _) = error { return status == 0 ? "no_http_status" : "http_status_\(status)" }
         return "other_error"
+    }
+
+    /// Whole milliseconds, so the logs read the same whatever the Mac's locale.
+    static func milliseconds(_ duration: Duration) -> Int64 {
+        duration.components.seconds * 1000 + duration.components.attoseconds / 1_000_000_000_000_000
     }
 
     /// Runs `operation`, cancelling it at `limit`. A request that keeps trickling bytes never hits

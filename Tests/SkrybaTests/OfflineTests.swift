@@ -37,7 +37,9 @@ struct RetryTests {
         #expect(Retry.failureKind(for: Retry.TimedOut()) == "app_deadline")
         #expect(Retry.failureKind(for: URLError(.networkConnectionLost)) == "url_error_-1005")
         #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 503, message: "private response")) == "http_status_503")
+        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 0, message: "No response.")) == "no_http_status")
         #expect(Retry.failureKind(for: CancellationError()) == "cancelled")
+        #expect(Retry.milliseconds(.milliseconds(1234) + .microseconds(500)) == 1234)
     }
 }
 
