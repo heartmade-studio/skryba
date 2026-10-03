@@ -103,6 +103,11 @@ final class AppController {
         updates.onNewVersion = { [weak self] version in self?.announceUpdate(version) }
         updates.start { [weak self] in self?.settings.checkForUpdates ?? false }
         hud.onCancel = { [weak self] in self?.cancelTranscription() }
+        hud.onDismiss = { [weak self] in
+            guard let self else { return }
+            if case .error = self.phase { self.phase = .idle }
+            self.hud.hide()
+        }
         hotKey.onPress = { [weak self] in self?.startRecording() }
         hotKey.onRelease = { [weak self] in self?.stopRecording() }
         fnKey.onPress = { [weak self] in self?.fnPressed() }

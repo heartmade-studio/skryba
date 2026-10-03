@@ -23,6 +23,13 @@ final class RecordingHUD {
             default: false
             }
         }
+
+        var isDismissible: Bool {
+            switch self {
+            case .info, .error: true
+            default: false
+            }
+        }
     }
 
     @Observable
@@ -31,6 +38,7 @@ final class RecordingHUD {
         /// A second, smaller line, such as "Offline · will be saved".
         var note: String?
         var onCancel: () -> Void = {}
+        var onDismiss: () -> Void = {}
     }
 
     private let model = Model()
@@ -42,6 +50,12 @@ final class RecordingHUD {
         set { model.onCancel = newValue }
     }
 
+    /// Called when the user dismisses a transient message.
+    var onDismiss: () -> Void {
+        get { model.onDismiss }
+        set { model.onDismiss = newValue }
+    }
+
     private(set) var style: Style?
 
     func show(_ style: Style, note: String? = nil) {
@@ -50,7 +64,7 @@ final class RecordingHUD {
         model.note = note
         let panel = panel ?? makePanel()
         self.panel = panel
-        panel.ignoresMouseEvents = !style.isCancellable
+        panel.ignoresMouseEvents = !(style.isCancellable || style.isDismissible)
 
         // SwiftUI applies observable model changes on a later layout pass. Measuring the
         // hosting view here can return the previous message's size, leaving long messages
@@ -115,11 +129,30 @@ private struct HUDView: View {
         }
         .font(.system(size: 13, weight: .medium))
         .foregroundStyle(.white)
+        .padding(.trailing, model.style.isDismissible ? 12 : 0) // keeps text clear of the ×
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            if model.style.isDismissible {
+                dismissButton.offset(x: 6, y: -6) // stays within the shadow margin below
+            }
+        }
         .padding(8) // room for the shadow
         .fixedSize()
+    }
+
+    private var dismissButton: some View {
+        Button { model.onDismiss() } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 20, height: 20)
+                .background(.gray.opacity(0.9), in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Dismiss message")
     }
 
     private func cancelButton(_ title: String = "Cancel") -> some View {
