@@ -16,7 +16,34 @@ struct GroqClient: ChatClient {
     private static let session = URLSession(configuration: .ephemeral)
     private static let log = Logger(subsystem: "pl.heartmade.skryba", category: "network")
 
+    /// Whisper's own fallback temperature for a doubtful result (it steps 0.2, 0.4, … up to 1.0).
+    /// A little randomness gets the decoder out of the rut it fell into at temperature 0.
+    static let retryTemperature = 0.2
+
+    /// Transcribes at temperature 0. If a segment looks garbled (see `Segment.isDoubtful`), sends the
+    /// whole recording once more with a little randomness and keeps the better of the two.
+    /// Groq doesn't do this fallback itself, unlike the open-source Whisper.
     func transcribe(fileURL: URL, language: String, prompt: String) async throws -> String {
+        let first = try await transcription(of: fileURL, language: language, prompt: prompt, temperature: 0)
+        Self.log.info("groq segments: \(first.confidenceSummary, privacy: .public)")
+        guard first.doubtfulSegments > 0 else { return first.speechText }
+
+        let second: Transcription
+        do {
+            second = try await transcription(of: fileURL, language: language, prompt: prompt, temperature: Self.retryTemperature)
+        } catch where !Retry.isCancellation(error) {
+            // The first transcript is still usable; a failed second opinion must not lose it.
+            Self.log.notice("groq confidence retry failed: \(Retry.failureKind(for: error), privacy: .public)")
+            return first.speechText
+        }
+        let kept = Transcription.better(first, second)
+        Self.log.info(
+            "groq confidence retry: \(second.confidenceSummary, privacy: .public) kept=\(kept === second ? "retry" : "first", privacy: .public)"
+        )
+        return kept.speechText
+    }
+
+    private func transcription(of fileURL: URL, language: String, prompt: String, temperature: Double) async throws -> Transcription {
         let boundary = "Skryba-\(UUID().uuidString)"
         var body = Data()
 
@@ -24,9 +51,10 @@ struct GroqClient: ChatClient {
             body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
         }
         field("model", Self.model)
-        // verbose_json adds per-segment confidence, used below to drop hallucinated silence.
+        // verbose_json adds per-segment confidence: used to drop hallucinated silence and to spot
+        // garbled segments worth a retry.
         field("response_format", "verbose_json")
-        field("temperature", "0")
+        field("temperature", String(temperature))
         if !language.isEmpty { field("language", language) }
         if !prompt.isEmpty { field("prompt", prompt) }
 
@@ -42,7 +70,7 @@ struct GroqClient: ChatClient {
             timeout: 30,
             label: "transcription"
         )
-        return try Self.decoder.decode(Transcription.self, from: data).speechText
+        return try Transcription.decode(data)
     }
 
     /// One chat completion; returns the reply text.
@@ -81,36 +109,69 @@ struct GroqClient: ChatClient {
         return data
     }
 
-    private static var decoder: JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
-    }
-
-    private struct Transcription: Decodable {
+    /// A `verbose_json` reply. A class, so `transcribe` can tell which of two replies it kept.
+    final class Transcription: Decodable, Sendable {
         let text: String
         let segments: [Segment]?
+
+        static func decode(_ data: Data) throws -> Transcription {
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(Transcription.self, from: data)
+        }
 
         struct Segment: Decodable {
             let text: String
             let noSpeechProb: Double?
             let avgLogprob: Double?
+            let compressionRatio: Double?
 
             /// Whisper's own silence rule: likely no speech *and* low confidence. See also `Hallucinations`.
             var isLikelySilence: Bool {
                 (noSpeechProb ?? 0) > 0.6 && (avgLogprob ?? 0) < -1.0
             }
+
+            /// Whisper's own thresholds for retrying a window at a higher temperature: the model was
+            /// unsure of its words, or it repeated itself (text that compresses too well).
+            var isDoubtful: Bool {
+                !isLikelySilence && ((avgLogprob ?? 0) < -1.0 || (compressionRatio ?? 0) > 2.4)
+            }
         }
+
+        /// The segments that end up in the transcript.
+        private var speech: [Segment] { (segments ?? []).filter { !$0.isLikelySilence } }
 
         var speechText: String {
             guard let segments, !segments.isEmpty else {
                 return text.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            return segments
-                .filter { !$0.isLikelySilence }
-                .map(\.text)
-                .joined()
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return speech.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var doubtfulSegments: Int { speech.count { $0.isDoubtful } }
+
+        /// The least confident segment's score; 0 when there is nothing to judge.
+        var lowestLogprob: Double { speech.compactMap(\.avgLogprob).min() ?? 0 }
+
+        /// Fewer doubtful segments wins; on a tie, the higher worst-segment confidence. The first one
+        /// (temperature 0) wins a full tie.
+        static func better(_ first: Transcription, _ second: Transcription) -> Transcription {
+            if second.doubtfulSegments != first.doubtfulSegments {
+                return second.doubtfulSegments < first.doubtfulSegments ? second : first
+            }
+            return second.lowestLogprob > first.lowestLogprob ? second : first
+        }
+
+        /// Numbers only, never the dictated words: enough to tune the thresholds from the log.
+        var confidenceSummary: String {
+            let highestCompression = speech.compactMap(\.compressionRatio).max() ?? 0
+            return "count=\(speech.count) doubtful=\(doubtfulSegments) "
+                + "lowest_avg_logprob=\(Self.decimal(lowestLogprob)) highest_compression_ratio=\(Self.decimal(highestCompression))"
+        }
+
+        /// Two decimals with a dot, whatever the Mac's locale, so the logs read the same everywhere.
+        private static func decimal(_ value: Double) -> String {
+            String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), value)
         }
     }
 

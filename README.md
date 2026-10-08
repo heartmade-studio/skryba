@@ -51,7 +51,7 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 | `FnGesture.swift` | Everything a Fn press means, in one place: hold to talk, a triple tap for hands-free, a tap to stop. A cancelled take resets it, so no half-finished gesture outlives it. |
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. Cuts the trailing silence, where Whisper would otherwise invent words. |
-| `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing. |
+| `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing; one retry at temperature 0.2 when a segment looks garbled. |
 | `CloudflareClient.swift` | Whisper large-v3-turbo through Cloudflare Workers AI, as an alternative to Groq, plus its chat models for AI cleanup. |
 | `ChatCompletion.swift` | The OpenAI-style chat request that both providers accept, for AI cleanup. |
 | `LocalWhisper.swift` | Optional offline transcription: converts the take to WAV with AVFoundation and runs `whisper-cli` directly (no shell). Cancelling or a timeout stops it. |
