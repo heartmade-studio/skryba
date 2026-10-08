@@ -12,9 +12,9 @@ into the text field you were typing in. No internet? The take is kept, and you c
 later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-25 Swift files, about 3,400 lines including comments.
+26 Swift files, about 3,800 lines including comments.
 
-**Status: 1.6.2.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
+**Status: 1.6.3.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
 
 ## Screenshots
