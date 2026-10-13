@@ -78,12 +78,28 @@ final class RecordingHUD {
             self.position(panel)
             panel.orderFrontRegardless()
             self.logPlacement(of: panel, for: style, moment: "shown")
+            self.rebuildIfOffSpace(panel, for: style)
             // A space switch (e.g. into a full-screen app) may still be animating; look again once it settles.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak panel] in
-                guard let self, let panel, self.panel === panel, self.style == style else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, let panel = self.panel, self.style == style else { return }
                 self.logPlacement(of: panel, for: style, moment: "settled")
+                self.rebuildIfOffSpace(panel, for: style)
             }
         }
+    }
+
+    /// Over a full-screen app, macOS sometimes orders a reused panel onto another space despite
+    /// `.canJoinAllSpaces`: it reports itself visible but isn't on screen. A new window always
+    /// opens on the active space, so replace the stuck one.
+    private func rebuildIfOffSpace(_ panel: NSPanel, for style: Style) {
+        guard panel.isVisible, !panel.isOnActiveSpace else { return }
+        panel.orderOut(nil)
+        let fresh = makePanel()
+        fresh.ignoresMouseEvents = panel.ignoresMouseEvents
+        self.panel = fresh
+        position(fresh)
+        fresh.orderFrontRegardless()
+        logPlacement(of: fresh, for: style, moment: "rebuilt")
     }
 
     /// Diagnostics for a HUD that is shown but not seen. Logs only window geometry and state,
