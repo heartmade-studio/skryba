@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import os
 import SwiftUI
 
 /// A small pill near the bottom of the screen showing what Skryba is doing.
@@ -41,6 +42,8 @@ final class RecordingHUD {
         var onDismiss: () -> Void = {}
     }
 
+    private static let log = Logger(subsystem: "pl.heartmade.skryba", category: "hud")
+
     private let model = Model()
     private var panel: NSPanel?
 
@@ -74,6 +77,51 @@ final class RecordingHUD {
             guard let self, let panel, self.panel === panel, self.style != nil else { return }
             self.position(panel)
             panel.orderFrontRegardless()
+            self.logPlacement(of: panel, for: style, moment: "shown")
+            self.rebuildIfOffSpace(panel, for: style)
+            // A space switch (e.g. into a full-screen app) may still be animating; look again once it settles.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, let panel = self.panel, self.style == style else { return }
+                self.logPlacement(of: panel, for: style, moment: "settled")
+                self.rebuildIfOffSpace(panel, for: style)
+            }
+        }
+    }
+
+    /// Over a full-screen app, macOS sometimes orders a reused panel onto another space despite
+    /// `.canJoinAllSpaces`: it reports itself visible but isn't on screen. A new window always
+    /// opens on the active space, so replace the stuck one.
+    private func rebuildIfOffSpace(_ panel: NSPanel, for style: Style) {
+        guard panel.isVisible, !panel.isOnActiveSpace else { return }
+        panel.orderOut(nil)
+        let fresh = makePanel()
+        fresh.ignoresMouseEvents = panel.ignoresMouseEvents
+        self.panel = fresh
+        position(fresh)
+        fresh.orderFrontRegardless()
+        logPlacement(of: fresh, for: style, moment: "rebuilt")
+    }
+
+    /// Diagnostics for a HUD that is shown but not seen. Logs only window geometry and state,
+    /// never message text (an error can quote a server reply).
+    private func logPlacement(of panel: NSPanel, for style: Style, moment: StaticString) {
+        let screens = NSScreen.screens
+        let mouse = NSEvent.mouseLocation
+        let mouseScreen = screens.firstIndex { NSMouseInRect(mouse, $0.frame, false) }.map(String.init) ?? "none"
+        let panelScreen = panel.screen.flatMap { s in screens.firstIndex { $0 === s } }.map(String.init) ?? "none"
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+        Self.log.notice("HUD \(moment, privacy: .public) \(Self.kind(style), privacy: .public): visible=\(panel.isVisible, privacy: .public) activeSpace=\(panel.isOnActiveSpace, privacy: .public) unoccluded=\(panel.occlusionState.contains(.visible), privacy: .public) frame=\(NSStringFromRect(panel.frame), privacy: .public) panelScreen=\(panelScreen, privacy: .public) mouseScreen=\(mouseScreen, privacy: .public) screens=\(screens.count, privacy: .public) front=\(front, privacy: .public)")
+    }
+
+    private static func kind(_ style: Style) -> String {
+        switch style {
+        case .recording: "recording"
+        case .handsFree: "handsFree"
+        case .cleaningUp: "cleaningUp"
+        case .transcribing(let attempt): "transcribing(\(attempt))"
+        case .transcribingLocally: "transcribingLocally"
+        case .info: "info"
+        case .error: "error"
         }
     }
 
