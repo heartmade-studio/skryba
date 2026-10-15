@@ -14,7 +14,7 @@ later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
 26 Swift files, about 3,800 lines including comments.
 
-**Status: 1.6.4.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
+**Status: 1.6.5.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
 
 ## Screenshots
@@ -63,7 +63,7 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 | `Hallucinations.swift` | Drops stock phrases ("Thanks for watching") and prompt echoes, but only from clips with under 0.8 s of voice. |
 | `Vocabulary.swift` | Your list of names, used as Whisper's prompt and to fix near misses afterwards ("Hrtmade" → "Heartmade"), keeping Polish case endings. |
 | `PasteTarget.swift` | Remembers the app, window and text field that had focus when the take started, read through the Accessibility API. |
-| `Paster.swift` | The paste step: a transient clipboard item, then ⌘V, then your clipboard restored. It refuses if the focus moved, and never overwrites something you copied meanwhile. |
+| `Paster.swift` | The paste step: a transient clipboard item, then ⌘V, then your clipboard restored once the app has read the text. It refuses if the focus moved, and never overwrites something you copied meanwhile. |
 | `RecordingHUD.swift` | A non-activating floating pill, so it never steals focus from the app you're typing in. |
 | `Keychain.swift` | Keeps the API credentials in the macOS keychain, not in files or UserDefaults. |
 

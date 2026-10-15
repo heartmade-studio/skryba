@@ -30,6 +30,7 @@ stay small, readable, and well commented.
   key-state watchdog is off in hands-free; only the length cap applies.
 - Paste only into the `PasteTarget` (app, window, field) captured at the start of the take; otherwise fall back
   to the clipboard. Never overwrite a clipboard the user changed meanwhile (`Paster.decide`).
+  Restore the user's clipboard only after the app has read the transcript, never on a timer (`Paster.afterPaste`).
 - A take lives in `AudioRecorder.directory` while it records. A valid finished take moves to
   `PendingRecordings` before anything is sent, and leaves it once transcribed (an empty or
   hallucinated result counts as transcribed). Failures, offline and cancels keep it there for a

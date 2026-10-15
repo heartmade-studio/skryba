@@ -63,6 +63,11 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Copy something right after releasing Fn, before the paste. Your copied item is not
       overwritten or pasted, and the transcript is under **Copy last**.
 - [ ] Clipboard restore: copy a word, dictate, then ⌘V. Your original word comes back.
+- [ ] Slow app: copy a word, start a long reply streaming in the Claude app, dictate into its
+      prompt twice in a row. Both takes paste the transcript, never the copied word.
+- [ ] Unread paste: copy a word, dictate into a field that ignores ⌘V (for example Finder with no
+      selection). After about 3 s you see "The app didn’t take the text in time…", and ⌘V gives
+      the transcript.
 - [ ] Hold Fn and change **Hold to dictate** in Settings with the mouse. Recording stops (orange mic
       dot disappears) and nothing is sent.
 - [ ] Hold Fn, click into a password field (for example a login form in Safari),
