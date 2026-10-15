@@ -7,6 +7,9 @@ import Carbon.HIToolbox
 ///
 /// It only pastes where dictation started (see `PasteTarget`), and it never overwrites something the
 /// user copied while the transcript was on its way.
+///
+/// The clipboard comes back only once the app has actually read the transcript. A busy app can
+/// handle ⌘V seconds late; restoring on a fixed timer then pasted the user's old clipboard instead.
 @MainActor
 enum Paster {
     enum Outcome: Equatable {
@@ -24,12 +27,26 @@ enum Paster {
         case giveUp(String)
     }
 
+    /// What to do with the clipboard after ⌘V.
+    enum AfterPaste: Equatable {
+        /// The app read the transcript: put the user's clipboard back.
+        case restore
+        /// No read yet: keep the transcript there, so a late paste still gets the right text.
+        case keepTranscript
+        /// The user copied something meanwhile: leave their copy alone.
+        case leaveAlone
+    }
+
     enum Message {
         static let noPermission = "Grant Accessibility access to paste. The text is in your clipboard."
         static let focusMoved = "The focus moved, so nothing was pasted. The text is in your clipboard."
         static let keysHeld = "Keys were still held, so nothing was pasted. The text is in your clipboard."
         static let clipboardChanged = "You copied something, so nothing was pasted. Use “Copy last” in the menu."
+        static let notConfirmed = "The app didn’t take the text in time. It is in your clipboard."
     }
+
+    /// How long to wait for the app to read the transcript after ⌘V.
+    static let readTimeout: Duration = .seconds(3)
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
@@ -51,8 +68,11 @@ enum Paster {
         }
 
         let saved = snapshot(of: pasteboard)
+        // The text is promised, not written: the pasteboard asks `reader` for it at the moment an app
+        // reads it, which is the only sign that the paste happened.
+        let reader = ReadWatcher(text: text)
         let item = NSPasteboardItem()
-        item.setString(text, forType: .string)
+        item.setDataProvider(reader, forTypes: [.string])
         // Asks clipboard managers not to record this temporary item (nspasteboard.org convention).
         item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
         pasteboard.clearContents()
@@ -73,14 +93,33 @@ enum Paster {
 
         sendCommandV()
 
-        // ⌘V is asynchronous and there is no "pasted" callback. Give the app time to read the
-        // clipboard, then restore it unless the user copied something new in between.
-        try? await Task.sleep(for: .milliseconds(500))
-        if pasteboard.changeCount == ourChange {
+        // ⌘V is asynchronous. Wait until the app has read the text, then restore the clipboard.
+        let deadline = ContinuousClock.now + readTimeout
+        while !reader.wasRead, pasteboard.changeCount == ourChange, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        // Some apps read the clipboard in several steps; let them finish before swapping it.
+        if reader.wasRead { try? await Task.sleep(for: .milliseconds(250)) }
+
+        switch afterPaste(read: reader.wasRead, clipboardUnchanged: pasteboard.changeCount == ourChange) {
+        case .restore:
             pasteboard.clearContents()
             if !saved.isEmpty { pasteboard.writeObjects(saved) }
+            return .pasted
+        case .keepTranscript:
+            // Replace the promise with real text, so it outlives Skryba and a late ⌘V still works.
+            copy(text)
+            return .notPasted(Message.notConfirmed)
+        case .leaveAlone:
+            return .pasted
         }
-        return .pasted
+    }
+
+    /// The user's old clipboard may come back only after the app has taken the transcript;
+    /// restoring earlier is what pasted stale text into a slow app.
+    nonisolated static func afterPaste(read: Bool, clipboardUnchanged: Bool) -> AfterPaste {
+        guard clipboardUnchanged else { return .leaveAlone }
+        return read ? .restore : .keepTranscript
     }
 
     /// The user's own clipboard always wins: if they copied something while we waited, nothing is
@@ -119,6 +158,21 @@ enum Paster {
             try? await Task.sleep(for: .milliseconds(25))
         }
         return false
+    }
+
+    /// Supplies the promised transcript and records that someone asked for it. The pasteboard calls
+    /// it on the main thread, while `paste` is suspended in its wait.
+    @MainActor
+    private final class ReadWatcher: NSObject, NSPasteboardItemDataProvider {
+        private let text: String
+        private(set) var wasRead = false
+
+        init(text: String) { self.text = text }
+
+        nonisolated func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+            item.setString(text, forType: type)
+            MainActor.assumeIsolated { wasRead = true }
+        }
     }
 
     private static func sendCommandV() {

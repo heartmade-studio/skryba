@@ -21,3 +21,19 @@ struct PasterDecisionTests {
             == .keepOnClipboard(Paster.Message.focusMoved))
     }
 }
+
+struct PasterAfterPasteTests {
+    @Test func restoresOnlyOnceTheAppReadTheTranscript() {
+        #expect(Paster.afterPaste(read: true, clipboardUnchanged: true) == .restore)
+    }
+
+    /// Regression: a fixed 500 ms restore let a busy app paste the user's old clipboard instead.
+    @Test func keepsTheTranscriptWhenTheReadIsNotConfirmed() {
+        #expect(Paster.afterPaste(read: false, clipboardUnchanged: true) == .keepTranscript)
+    }
+
+    @Test func neverTouchesAClipboardTheUserChangedAfterPaste() {
+        #expect(Paster.afterPaste(read: true, clipboardUnchanged: false) == .leaveAlone)
+        #expect(Paster.afterPaste(read: false, clipboardUnchanged: false) == .leaveAlone)
+    }
+}
