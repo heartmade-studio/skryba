@@ -88,6 +88,10 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## Offline and bad connections
 
+- [ ] With local fallback enabled, stall cloud requests (Network Link Conditioner, *100% Loss*).
+      After the initial *Transcribing…*, the HUD advances through *attempt 2 of 3* and
+      *attempt 3 of 3*, then *Transcribing on this Mac…*, within the existing total cloud deadline.
+      Repeat and click **Cancel** during attempt 3: processing stops and the recording stays in the menu.
 - [ ] Turn Wi-Fi off. Hold Fn: the HUD shows *Offline · will be saved for later* under *Listening…*.
       Release: you see "You're offline. The recording is saved…", and the menu-bar icon is a tray.
 - [ ] The menu lists the saved recording (time · length). Turn Wi-Fi on: within a few seconds a

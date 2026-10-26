@@ -3,9 +3,10 @@ import Foundation
 /// How hard to try the cloud before moving on: to local Whisper if it's on, else to the saved queue.
 ///
 /// All attempts share one deadline, so after releasing the key you are back to a usable app quickly,
-/// even on a stalled connection. One attempt may take at most half of it, so a hanging request still
-/// leaves time for another. Some failures are worth another attempt (a stalled upload, a busy
-/// server); others never get better by repeating (no network at all, a rejected key).
+/// even on a stalled connection. Each attempt shares the remaining time with the attempts still
+/// to come, so stalled requests don't consume the budget before attempt three. Some failures are
+/// worth retrying (a stalled upload, a busy server); others never get better by repeating
+/// (no network at all, a rejected key).
 enum Retry {
     static let maximumAttempts = 3
 
@@ -37,16 +38,20 @@ enum Retry {
         let end = clock.now + deadline
         var attempt = 1
         while true {
+            try Task.checkCancellation()
+            guard clock.now < end else { throw TimedOut() }
             onAttempt(attempt)
             let attemptStarted = clock.now
+            let remainingAttempts = maximumAttempts - attempt + 1
+            let limit = attemptStarted + (end - attemptStarted) / remainingAttempts
             do {
-                return try await run(operation, until: min(end, clock.now + deadline / 2))
+                return try await run(operation, until: limit)
             } catch {
                 onAttemptFailure(attempt, clock.now - attemptStarted, error)
-                // Another attempt only if it could still get a fair share of the time.
+                // Backoff counts against the same deadline; never announce an attempt with no time left.
                 let next = clock.now + delay(after: attempt)
                 guard attempt < maximumAttempts, isTransient(error) || error is TimedOut,
-                      end - next >= deadline / 4 else { throw error }
+                      next < end else { throw error }
                 try await Task.sleep(until: next, clock: clock)
                 attempt += 1
             }

@@ -70,7 +70,7 @@ struct RetryDeadlineTests {
         var attempts = 0
         let started = ContinuousClock.now
         let text = try await Retry.attempts(within: .seconds(3), onAttempt: { attempts = $0 }) {
-            // Only the first request hangs; it's cut off at half the deadline.
+            // Only the first request hangs; later attempts keep their share of the deadline.
             if ContinuousClock.now - started < .seconds(1) { try await Task.sleep(for: .seconds(60)) }
             return "text"
         }
@@ -87,6 +87,45 @@ struct RetryDeadlineTests {
             }
         }
         #expect(attempts == 1)
+    }
+
+    @Test func stalledRequestsReportAllThreeAttemptsBeforeGivingUp() async {
+        let started = ContinuousClock.now
+        var attempts: [Int] = []
+        var failures: [Int] = []
+        await #expect(throws: Retry.TimedOut.self) {
+            try await Retry.attempts(
+                within: .seconds(6),
+                onAttempt: { attempts.append($0) },
+                onAttemptFailure: { attempt, _, _ in failures.append(attempt) },
+                operation: Self.stalled
+            )
+        }
+        #expect(attempts == [1, 2, 3])
+        #expect(failures == [1, 2, 3])
+        #expect(ContinuousClock.now - started < .seconds(7))
+    }
+
+    @Test func theThirdAttemptCanRecoverAfterTwoConnectionFailures() async throws {
+        var attempts: [Int] = []
+        let requests = RequestCount()
+        let text = try await Retry.attempts(
+            within: .seconds(6),
+            onAttempt: { attempts.append($0) }
+        ) {
+            if await requests.next() < 3 { throw URLError(.networkConnectionLost) }
+            return "text"
+        }
+        #expect(text == "text")
+        #expect(attempts == [1, 2, 3])
+    }
+
+    private actor RequestCount {
+        private var count = 0
+        func next() -> Int {
+            count += 1
+            return count
+        }
     }
 
     @Test func cancellingStopsAStalledRequestAtOnce() async {
