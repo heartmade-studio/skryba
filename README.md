@@ -58,6 +58,7 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 | `PendingRecordings.swift` | Takes not transcribed yet: a private folder, left out of backups, emptied after 7 days. |
 | `NetworkMonitor.swift` | Knows when the Mac has no network, so the HUD says "Offline" as soon as you start. |
 | `Retry.swift` | Which failures are worth another attempt (a stalled upload, a busy server) and which aren't (no network, a rejected key). |
+| `Transcription.swift` | Records the actual transcription route and whether cloud cleanup is allowed after local fallback. |
 | `TextCleanup.swift` | Optional AI cleanup: a fixed prompt, the models per provider, and a guard that pastes the raw transcript unless the reply only removed hesitations and applied your replacements. |
 | `Replacements.swift` | Your rewrite rules for AI cleanup, one per line: "claude md → CLAUDE.md". |
 | `Hallucinations.swift` | Drops stock phrases ("Thanks for watching") and prompt echoes, but only from clips with under 0.8 s of voice. |
@@ -181,7 +182,9 @@ Skryba has no servers, accounts, analytics or telemetry. It talks to the provide
   to a chat model at that same provider. If you put client names in the vocabulary,
   the provider receives them with every request. Read
   [Groq's privacy policy](https://groq.com/privacy-policy/) or Cloudflare's if that matters for
-  your use. Local Whisper sends nothing anywhere.
+  your use. Local Whisper as the primary provider sends nothing anywhere. Local fallback also skips
+  cloud cleanup by default; turning off **Skip cleanup after local fallback** explicitly allows its
+  transcript and replacements to be sent to the selected cloud for cleanup.
 - **What stays local:** your settings and vocabulary (in UserDefaults), the API key (in the
   keychain), and the last transcript (in memory only, shown under *Copy last*).
 - **Recordings** are kept in `~/Library/Application Support/Skryba/Pending` (readable only by you,
@@ -232,13 +235,17 @@ Skryba never throws a dictation away because the network is gone.
 ## AI cleanup (optional, off by default)
 
 Whisper transcribes what it hears, including "yyy" and "eee". Turn on **Settings → AI cleanup** to
-pass each transcript through a chat model at the provider that transcribes, so the text goes
-nowhere the audio didn't:
+pass cloud transcripts through a chat model at the same provider:
 
 - **Groq:** `openai/gpt-oss-120b` by default, or `qwen/qwen3.8-27b` (preview).
 - **Cloudflare:** `@cf/openai/gpt-oss-120b` by default, `@cf/google/gemma-4-26b-a4b-it` or
   `@cf/mistralai/mistral-small-3.1-24b-instruct`.
-- **Local Whisper:** no cleanup. Nothing leaves your Mac.
+- **Local Whisper as primary:** no cleanup. Nothing leaves your Mac.
+
+**Skip cleanup after local fallback** is on by default in the AI Cleanup tab. After a failed cloud
+request, the local transcript is delivered without another cloud wait. Turn it off only if you want
+the selected cloud model to clean that local transcript too; it can add latency or fail on a bad
+connection. This option does not change cleanup after successful cloud transcription.
 
 Each provider remembers its own choice. Every model that can reason does so before answering
 (Mistral can't): in tests, GPT-OSS on its lowest setting missed misspelled replacements like

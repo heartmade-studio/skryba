@@ -17,6 +17,8 @@ stay small, readable, and well commented.
 
 ## Rules
 
+- PR descriptions start with 2–3 sentences (at most 5) explaining the user need, observed problem,
+  and intended benefit. Separate measured evidence from estimates; never include dictated text or secrets.
 - **Public repo: never commit secrets.** API keys and tokens live only in the keychain (`Keychain.swift`).
   No `.env` files, no keys in tests or docs.
 - No third-party dependencies without a strong reason. The small footprint is the point.
@@ -47,6 +49,9 @@ stay small, readable, and well commented.
   must never lose a dictation: on any error, or a reply that changed anything else
   (`TextCleanup.isAllowed`, run on the final text), paste the plain transcript. Never log
   dictated text; log only the kind of rejection.
+- Skip cloud cleanup after local fallback by default; the user may explicitly turn this off in
+  AI Cleanup settings. Base this decision on the actual transcription route, not the selected provider.
+  Local Whisper as the primary provider never sends its text for cloud cleanup.
 - Do not sandbox the app. The App Sandbox blocks the synthetic ⌘V. Distribution: source, plus an
   unnotarized universal DMG attached to each GitHub release (no Apple Developer Program). The DMG
   is built with `scripts/build.sh --dmg`, and the README explains Gatekeeper's "Open Anyway".

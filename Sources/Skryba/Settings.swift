@@ -57,6 +57,10 @@ final class Settings {
     var cleanupEnabled: Bool {
         didSet { defaults.set(cleanupEnabled, forKey: Key.cleanupEnabled) }
     }
+    /// On by default: a local rescue should not wait for another cloud request.
+    var skipCleanupAfterLocalFallback: Bool {
+        didSet { defaults.set(skipCleanupAfterLocalFallback, forKey: Key.skipCleanupAfterLocalFallback) }
+    }
     /// The cleanup model is chosen per provider, so switching providers keeps each choice.
     var groqCleanupModel: TextCleanup.Model {
         didSet { defaults.set(groqCleanupModel.rawValue, forKey: Key.cleanupModel) }
@@ -106,8 +110,8 @@ final class Settings {
         isProviderConfigured || usesLocalFallback
     }
 
-    /// AI cleanup runs at the provider that transcribes, so the text goes nowhere the audio didn't.
-    /// None for local Whisper: its text stays on this Mac.
+    /// The selected cloud's cleanup model. `Transcription` decides whether the actual route allows it.
+    /// None when local Whisper is primary: its text stays on this Mac.
     var cleanupModel: TextCleanup.Model? {
         switch provider {
         case .groq: groqCleanupModel
@@ -155,6 +159,7 @@ final class Settings {
         static let playSounds = "playSounds"
         static let checkForUpdates = "checkForUpdates"
         static let cleanupEnabled = "cleanupEnabled"
+        static let skipCleanupAfterLocalFallback = "skipCleanupAfterLocalFallback"
         static let cleanupModel = "cleanupModel" // Groq's; the name predates Cloudflare
         static let cloudflareCleanupModel = "cloudflareCleanupModel"
         static let replacements = "replacements"
@@ -200,6 +205,7 @@ final class Settings {
         playSounds = defaults.object(forKey: Key.playSounds) as? Bool ?? true
         checkForUpdates = defaults.object(forKey: Key.checkForUpdates) as? Bool ?? true
         cleanupEnabled = defaults.bool(forKey: Key.cleanupEnabled)
+        skipCleanupAfterLocalFallback = defaults.object(forKey: Key.skipCleanupAfterLocalFallback) as? Bool ?? true
         groqCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cleanupModel), or: .gptOss)
         cloudflareCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cloudflareCleanupModel), or: .cloudflareGptOss)
         replacements = defaults.string(forKey: Key.replacements) ?? ""

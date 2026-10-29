@@ -39,6 +39,13 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## AI cleanup
 
+- [ ] With AI cleanup and local fallback enabled, **Skip cleanup after local fallback** starts on.
+      Cause the cloud transcription to fail while macOS still reports a network connection: local
+      Whisper transcribes and the text is pasted/copied without *Cleaning up…* or a chat request.
+      Turn the option off, restart Skryba, and verify the choice persists. Repeat with a cloud
+      transcription failure: cleanup is attempted if connectivity allows it, and failure still
+      delivers the raw local transcript. A successful cloud transcription still gets cleanup with
+      either switch position. Local Whisper as primary never sends a chat request.
 - [ ] Turn on AI cleanup and add the replacement `claude md → CLAUDE.md`. Dictate "yyy otwórz plik
       claude md". The HUD shows *Cleaning up…* and "Otwórz plik CLAUDE.md" is pasted.
 - [ ] Dictate a question ("jaka jest stolica Francji"). The question is pasted, not an answer.

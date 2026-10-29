@@ -1,7 +1,8 @@
 import Foundation
 
 /// Optional second pass: a chat model removes hesitations ("yyy", "eee") and applies the user's
-/// `Replacements` ("claude md" → "CLAUDE.md"). Nothing else. It runs at the provider that transcribes.
+/// `Replacements` ("claude md" → "CLAUDE.md"). Nothing else. It runs at the selected cloud provider;
+/// local fallback skips this step by default, as decided by `Transcription`.
 ///
 /// A language model can still misbehave: answer a dictated question, reword it, or drop a word.
 /// `isAllowed` checks that the reply made only those two kinds of change, and any failure falls back
@@ -27,7 +28,7 @@ struct TextCleanup {
             }
         }
 
-        /// Where the model runs. Local Whisper has no cleanup: its text stays on this Mac.
+        /// Where the model runs. Primary local Whisper has no cleanup: its text stays on this Mac.
         var provider: Settings.TranscriptionProvider {
             switch self {
             case .gptOss, .qwen: .groq

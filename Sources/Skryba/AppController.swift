@@ -417,25 +417,29 @@ final class AppController {
         job = nil
 
         var text: String
+        let transcription: Transcription
         switch result {
         case .failure(let stop):
             if audio.saved == nil { AudioRecorder.remove(audio.url) }
             fail(message(for: stop, saved: audio.saved != nil))
             return
         case .success(let transcript):
+            transcription = transcript
             // Transcribed, even if to nothing: the audio has done its job.
             if let saved = audio.saved { pendingRecordings.remove(saved) } else { AudioRecorder.remove(audio.url) }
             let invented = Hallucinations.isLikely(
-                transcript, prompt: vocabulary.prompt, voicedDuration: audio.voicedDuration
+                transcript.text, prompt: vocabulary.prompt, voicedDuration: audio.voicedDuration
             )
-            text = invented ? "" : vocabulary.correct(transcript)
+            text = invented ? "" : vocabulary.correct(transcript.text)
         }
 
         var cleanupWarning: String?
         let raw = text
-        // Cleanup runs at the provider that transcribes. With local Whisper, offline, or without
-        // credentials it's skipped, and the plain text goes out.
-        if !text.isEmpty, settings.cleanupEnabled, let model = settings.cleanupModel,
+        // Use the actual route: selecting a cloud provider doesn't mean it transcribed this take.
+        let cleanupModel = transcription.cleanupModel(
+            using: settings.cleanupModel, skipLocalFallback: settings.skipCleanupAfterLocalFallback
+        )
+        if !text.isEmpty, settings.cleanupEnabled, let model = cleanupModel,
            settings.isProviderConfigured, network.isOnline {
             hud.show(.cleaningUp)
             (text, cleanupWarning) = await cleanUp(text, model: model, vocabulary: vocabulary)
@@ -469,7 +473,7 @@ final class AppController {
 
     /// Local Whisper when it's the provider. Otherwise the cloud first (unless we know we're offline),
     /// then local Whisper if the user turned it on as a fallback.
-    private func transcript(of audio: Audio, vocabulary: Vocabulary) async -> Result<String, Stop> {
+    private func transcript(of audio: Audio, vocabulary: Vocabulary) async -> Result<Transcription, Stop> {
         let provider = settings.provider
         let attempts = settings.cloudAttempts
         if provider == .local {
@@ -481,7 +485,7 @@ final class AppController {
             stop = .failed(settings.setupHint)
         } else if network.isOnline {
             do {
-                return .success(try await Retry.attempts(
+                let text = try await Retry.attempts(
                     within: Retry.deadline(forClipOf: audio.duration),
                     attemptLimit: attempts,
                     onAttempt: { attempt in
@@ -496,7 +500,8 @@ final class AppController {
                         )
                     },
                     operation: cloudTranscription(of: audio.url, with: provider, vocabulary: vocabulary)
-                ))
+                )
+                return .success(Transcription(text: text, source: .cloud(provider)))
             } catch where Retry.isCancellation(error) {
                 return .failure(.cancelled)
             } catch where Retry.isOffline(error) {
@@ -510,16 +515,18 @@ final class AppController {
         }
 
         guard settings.usesLocalFallback else { return .failure(stop) }
-        return await transcribeLocally(audio, vocabulary: vocabulary)
+        return await transcribeLocally(audio, vocabulary: vocabulary, asFallback: true)
     }
 
-    private func transcribeLocally(_ audio: Audio, vocabulary: Vocabulary) async -> Result<String, Stop> {
+    private func transcribeLocally(
+        _ audio: Audio, vocabulary: Vocabulary, asFallback: Bool = false
+    ) async -> Result<Transcription, Stop> {
         hud.show(.transcribingLocally)
         do {
             let text = try await settings.localWhisper.transcribe(
                 fileURL: audio.url, duration: audio.duration, language: settings.language, prompt: vocabulary.prompt
             )
-            return .success(text)
+            return .success(Transcription(text: text, source: asFallback ? .localFallback : .local))
         } catch where Retry.isCancellation(error) {
             return .failure(.cancelled)
         } catch {

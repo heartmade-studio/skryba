@@ -228,6 +228,14 @@ struct SettingsView: View {
             Section {
                 Toggle("Remove hesitations and apply replacements", isOn: $settings.cleanupEnabled)
                 if settings.cleanupEnabled {
+                    if settings.provider != .local {
+                        Toggle("Skip cleanup after local fallback", isOn: $settings.skipCleanupAfterLocalFallback)
+                        FootnoteText("""
+                            On by default: when local Whisper rescues a failed cloud transcription, paste \
+                            its text immediately. Turn this off to send the local transcript to your \
+                            cloud cleanup model, which can add another wait or fail on a bad connection.
+                            """)
+                    }
                     switch settings.provider {
                     case .groq:
                         Picker("Model", selection: $settings.groqCleanupModel) { modelOptions(for: .groq) }
