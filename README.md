@@ -177,6 +177,23 @@ with **Test**, and grant two permissions:
 Skryba has no servers, accounts, analytics or telemetry. It talks to the provider you chose:
 `api.groq.com` or `api.cloudflare.com`, and once a day to `api.github.com` to check for updates.
 
+Essential timings and outcomes use macOS unified logging's disk-persisted `notice` level. Each
+submitted dictation has a random ID, `dictation started` and `dictation finished` records; its
+transcription and optional cleanup stages use the same ID. Records contain durations, providers
+and outcome codes, not dictated words, vocabulary, replacements or credentials. Saved-recording
+retries are marked separately from fresh dictations. macOS manages retention by storage quota,
+so requesting seven days cannot recover purged records or old memory-only `info` messages.
+
+To export the available history, use the full command path (some shells shadow `log`):
+
+```bash
+/usr/bin/log show --predicate 'subsystem == "pl.heartmade.skryba"' --last 1d --style compact > ~/Desktop/skryba-log.txt
+```
+
+Count unique dictation IDs, not HUD refreshes or individual retry requests. A start without a finish
+can indicate an interrupted run; it is not a confirmed failure. These records are available after
+upgrading and cannot reconstruct older history.
+
 - **What leaves your Mac:** the audio of each take, plus your vocabulary list (sent as Whisper's
   prompt), to that one provider. With AI cleanup on, the transcript and your replacements also go
   to a chat model at that same provider. If you put client names in the vocabulary,

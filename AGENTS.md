@@ -52,6 +52,9 @@ stay small, readable, and well commented.
 - Skip cloud cleanup after local fallback by default; the user may explicitly turn this off in
   AI Cleanup settings. Base this decision on the actual transcription route, not the selected provider.
   Local Whisper as the primary provider never sends its text for cloud cleanup.
+- Essential dictation timings and outcomes use `Logger.notice` so retrospective exports do not
+  depend on volatile `info` buffers. Correlate stages with a random dictation ID; never log text,
+  vocabulary, replacements, credentials or provider response bodies. macOS still controls retention.
 - Do not sandbox the app. The App Sandbox blocks the synthetic ⌘V. Distribution: source, plus an
   unnotarized universal DMG attached to each GitHub release (no Apple Developer Program). The DMG
   is built with `scripts/build.sh --dmg`, and the README explains Gatekeeper's "Open Anyway".

@@ -10,6 +10,11 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## Dictation
 
+- [ ] Dictate twice and retry a saved recording, then close the live log stream. Export with
+      `/usr/bin/log show --predicate 'subsystem == "pl.heartmade.skryba"' --last 1h --style compact`
+      (no `--info`): all three submitted takes have a unique `dictation started` / `dictation finished`
+      ID pair, with the retry marked `saved_retry`. Transcription and cleanup outcomes use those IDs.
+      Check success, cancellation and failure; verify the output contains no dictated words or secrets.
 - [ ] Hold Fn, say a sentence, release. The text appears in Notes, in a browser text field, in
       Slack (Electron) and in Terminal.
 - [ ] Hold Fn and stay silent for 2 s. You see "No speech detected" and nothing is pasted.

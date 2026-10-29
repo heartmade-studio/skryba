@@ -412,19 +412,36 @@ final class AppController {
     }
 
     private func transcribe(_ audio: Audio, delivery: Delivery) async {
+        // One ID and one terminal event per submitted take, including saved-recording retries.
+        // Notice is persisted by unified logging; info may disappear with its in-memory buffer.
+        let id = take.uuidString
+        let started = ContinuousClock.now
+        var outcome = "failed"
+        let mode = switch delivery { case .copy: "saved_retry"; case .paste: "fresh" }
+        Self.log.notice("dictation started id=\(id, privacy: .public) mode=\(mode, privacy: .public) clip_ms=\(Retry.milliseconds(.seconds(audio.duration)), privacy: .public)")
+        defer {
+            Self.log.notice("dictation finished id=\(id, privacy: .public) outcome=\(outcome, privacy: .public) elapsed_ms=\(Retry.milliseconds(ContinuousClock.now - started), privacy: .public)")
+        }
         let vocabulary = Vocabulary(settings.vocabulary)
-        let result = await transcript(of: audio, vocabulary: vocabulary)
+        let result = await transcript(of: audio, vocabulary: vocabulary, id: id)
         job = nil
 
         var text: String
         let transcription: Transcription
         switch result {
         case .failure(let stop):
+            outcome = switch stop { case .cancelled: "cancelled"; case .offline: "offline"; case .failed: "failed" }
             if audio.saved == nil { AudioRecorder.remove(audio.url) }
             fail(message(for: stop, saved: audio.saved != nil))
             return
         case .success(let transcript):
             transcription = transcript
+            let source = switch transcript.source {
+            case .cloud(let provider): provider.rawValue
+            case .local: "local"
+            case .localFallback: "local_fallback"
+            }
+            Self.log.notice("transcription completed id=\(id, privacy: .public) source=\(source, privacy: .public) elapsed_ms=\(Retry.milliseconds(ContinuousClock.now - started), privacy: .public)")
             // Transcribed, even if to nothing: the audio has done its job.
             if let saved = audio.saved { pendingRecordings.remove(saved) } else { AudioRecorder.remove(audio.url) }
             let invented = Hallucinations.isLikely(
@@ -442,11 +459,15 @@ final class AppController {
         if !text.isEmpty, settings.cleanupEnabled, let model = cleanupModel,
            settings.isProviderConfigured, network.isOnline {
             hud.show(.cleaningUp)
-            (text, cleanupWarning) = await cleanUp(text, model: model, vocabulary: vocabulary)
+            (text, cleanupWarning) = await cleanUp(text, model: model, vocabulary: vocabulary, id: id)
+        } else if settings.cleanupEnabled, settings.skipCleanupAfterLocalFallback,
+                  case .localFallback = transcription.source {
+            Self.log.notice("cleanup bypassed id=\(id, privacy: .public) reason=local_fallback")
         }
 
         hud.hide()
         guard !text.isEmpty else {
+            outcome = "no_text"
             phase = .idle
             return
         }
@@ -456,24 +477,29 @@ final class AppController {
         switch delivery {
         case .copy:
             Paster.copy(text)
+            outcome = "copied"
             phase = .idle
             notify(["Copied. Press ⌘V to paste.", cleanupWarning].compactMap(\.self).joined(separator: " "))
         case .paste(let target):
             phase = .pasting
-            let outcome = await Paster.paste(text, into: target)
+            let pasteResult = await Paster.paste(text, into: target)
             phase = .idle
-            if case .notPasted(let message) = outcome {
+            if case .notPasted(let message) = pasteResult {
+                outcome = "not_pasted"
                 fail(message)
-            } else if let cleanupWarning {
-                // The dictation still arrived; say why it wasn't cleaned up rather than fail silently.
-                fail(cleanupWarning)
+            } else {
+                outcome = "pasted"
+                if let cleanupWarning {
+                    // The dictation still arrived; say why it wasn't cleaned up rather than fail silently.
+                    fail(cleanupWarning)
+                }
             }
         }
     }
 
     /// Local Whisper when it's the provider. Otherwise the cloud first (unless we know we're offline),
     /// then local Whisper if the user turned it on as a fallback.
-    private func transcript(of audio: Audio, vocabulary: Vocabulary) async -> Result<Transcription, Stop> {
+    private func transcript(of audio: Audio, vocabulary: Vocabulary, id: String) async -> Result<Transcription, Stop> {
         let provider = settings.provider
         let attempts = settings.cloudAttempts
         if provider == .local {
@@ -490,13 +516,13 @@ final class AppController {
                     attemptLimit: attempts,
                     onAttempt: { attempt in
                         hud.show(.transcribing(attempt: attempt, total: attempts))
-                        Self.log.info(
-                            "cloud transcription request started provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public)"
+                        Self.log.notice(
+                            "cloud transcription request started id=\(id, privacy: .public) provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public)"
                         )
                     },
                     onAttemptFailure: { attempt, elapsed, error in
                         Self.log.notice(
-                            "cloud transcription request failed provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public) elapsed_ms=\(Retry.milliseconds(elapsed), privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
+                            "cloud transcription request failed id=\(id, privacy: .public) provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public) elapsed_ms=\(Retry.milliseconds(elapsed), privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
                         )
                     },
                     operation: cloudTranscription(of: audio.url, with: provider, vocabulary: vocabulary)
@@ -508,7 +534,7 @@ final class AppController {
                 stop = .offline
             } catch {
                 Self.log.notice(
-                    "cloud transcription failed provider=\(provider.rawValue, privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
+                    "cloud transcription failed id=\(id, privacy: .public) provider=\(provider.rawValue, privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
                 )
                 stop = .failed(error.localizedDescription)
             }
@@ -625,13 +651,18 @@ final class AppController {
 
     /// Returns the cleaned-up text, or `text` unchanged plus a warning if cleanup fails or strays
     /// from it. The dictation itself must never be lost to this optional step.
-    private func cleanUp(_ text: String, model: TextCleanup.Model, vocabulary: Vocabulary) async -> (text: String, warning: String?) {
+    private func cleanUp(_ text: String, model: TextCleanup.Model, vocabulary: Vocabulary, id: String) async -> (text: String, warning: String?) {
         // One snapshot of the rules, so a change in Settings during the request can't mix them.
         let replacements = Replacements(settings.replacements)
         // Every cleanup model runs at Groq or Cloudflare.
         let client: any ChatClient = model.provider == .groq ? GroqClient(apiKey: settings.apiKey) : settings.cloudflare
         let cleanup = TextCleanup(client: client, model: model)
         let started = ContinuousClock.now
+        var outcome = "completed"
+        Self.log.notice("cleanup started id=\(id, privacy: .public) provider=\(model.provider.rawValue, privacy: .public)")
+        defer {
+            Self.log.notice("cleanup finished id=\(id, privacy: .public) outcome=\(outcome, privacy: .public) elapsed_ms=\(Retry.milliseconds(ContinuousClock.now - started), privacy: .public)")
+        }
         do {
             // Optional, so it gets little patience: past the limit the plain transcript goes out.
             let language = settings.language
@@ -647,17 +678,20 @@ final class AppController {
             // Judge exactly the text that would be pasted.
             let cleaned = vocabulary.correct(reply)
             guard TextCleanup.isAllowed(original: text, cleaned: cleaned, replacements: replacements) else {
+                outcome = "rejected"
                 // Never log the dictated words.
                 Self.log.notice("cleanup rejected: reply changed more than allowed")
                 return (text, TextCleanup.rejectionMessage)
             }
             return (cleaned, nil)
         } catch where Retry.isCancellation(error) {
+            outcome = "cancelled"
             Self.log.notice("cleanup skipped by the user")
             return (text, nil)
         } catch {
+            outcome = "failed"
             Self.log.error(
-                "cleanup failed provider=\(model.provider.rawValue, privacy: .public) elapsed_ms=\(Retry.milliseconds(ContinuousClock.now - started), privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
+                "cleanup failed id=\(id, privacy: .public) provider=\(model.provider.rawValue, privacy: .public) elapsed_ms=\(Retry.milliseconds(ContinuousClock.now - started), privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
             )
             return (text, "AI cleanup skipped. \(error.localizedDescription)")
         }

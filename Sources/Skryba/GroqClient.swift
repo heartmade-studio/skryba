@@ -97,7 +97,7 @@ struct GroqClient: ChatClient {
 
         let started = ContinuousClock.now
         let (data, response) = try await Self.session.upload(for: request, from: body)
-        Self.log.info("groq \(label, privacy: .public): \(body.count / 1024) KB, \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
+        Self.log.notice("groq \(label, privacy: .public): \(body.count / 1024) KB, \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         guard let http = response as? HTTPURLResponse else {
             throw SkrybaError.api(provider: "Groq", status: 0, message: "No response.")
         }

@@ -53,7 +53,7 @@ struct CloudflareClient: ChatClient {
 
         let started = ContinuousClock.now
         let (data, response) = try await Self.session.upload(for: request, from: body)
-        Self.log.info("cloudflare \(label, privacy: .public): \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
+        Self.log.notice("cloudflare \(label, privacy: .public): \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
             throw SkrybaError.api(provider: "Cloudflare", status: status, message: Self.errorMessage(in: data, status: status))
