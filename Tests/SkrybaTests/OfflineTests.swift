@@ -33,6 +33,15 @@ struct RetryTests {
         #expect(Retry.deadline(forClipOf: 300) == .seconds(42))
     }
 
+    @Test func attemptCountsStayBetweenOneAndThree() {
+        #expect(Retry.clampedAttempts(0) == 1)
+        #expect(Retry.clampedAttempts(-1) == 1)
+        #expect(Retry.clampedAttempts(1) == 1)
+        #expect(Retry.clampedAttempts(2) == 2)
+        #expect(Retry.clampedAttempts(3) == 3)
+        #expect(Retry.clampedAttempts(99) == 3)
+    }
+
     @Test func failureDiagnosticsDistinguishAppTimeoutsFromTransportAndHTTPFailures() {
         #expect(Retry.failureKind(for: Retry.TimedOut()) == "app_deadline")
         #expect(Retry.failureKind(for: URLError(.networkConnectionLost)) == "url_error_-1005")
@@ -87,6 +96,58 @@ struct RetryDeadlineTests {
             }
         }
         #expect(attempts == 1)
+    }
+
+    @Test(arguments: [1, 2, 3]) func connectionFailuresRespectTheSelectedAttemptCount(_ count: Int) async {
+        var attempts: [Int] = []
+        let requests = RequestCount()
+        await #expect(throws: URLError.self) {
+            try await Retry.attempts(
+                within: .seconds(6),
+                attemptLimit: count,
+                onAttempt: { attempts.append($0) }
+            ) { () async throws -> String in
+                await requests.increment()
+                throw URLError(.networkConnectionLost)
+            }
+        }
+        #expect(attempts == Array(1...count))
+        #expect(await requests.count == count)
+    }
+
+    @Test func oneStalledAttemptMovesOnWithoutWaitingForRetries() async {
+        let started = ContinuousClock.now
+        var attempts: [Int] = []
+        await #expect(throws: Retry.TimedOut.self) {
+            try await Retry.attempts(
+                within: Retry.deadline(forClipOf: 0),
+                attemptLimit: 1,
+                onAttempt: { attempts.append($0) },
+                operation: Self.stalled
+            )
+        }
+        #expect(attempts == [1])
+        #expect(ContinuousClock.now - started < .seconds(7))
+    }
+
+    @Test(arguments: [1, 2, 3]) func aSlowWorkingRequestKeepsItsOriginalTimeBudget(_ count: Int) async throws {
+        var attempts: [Int] = []
+        let text = try await Retry.attempts(
+            within: .seconds(6),
+            attemptLimit: count,
+            onAttempt: { attempts.append($0) }
+        ) {
+            // More than a third, less than half: don't cut off a slow but working request.
+            try await Task.sleep(for: .milliseconds(2500))
+            return "text"
+        }
+        #expect(text == "text")
+        #expect(attempts == [1])
+    }
+
+    private actor RequestCount {
+        private(set) var count = 0
+        func increment() { count += 1 }
     }
 
     @Test func cancellingStopsAStalledRequestAtOnce() async {

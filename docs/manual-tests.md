@@ -10,6 +10,11 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## Dictation
 
+- [ ] Dictate twice and retry a saved recording, then close the live log stream. Export with
+      `/usr/bin/log show --predicate 'subsystem == "pl.heartmade.skryba"' --last 1h --style compact`
+      (no `--info`): all three submitted takes have a unique `dictation started` / `dictation finished`
+      ID pair, with the retry marked `saved_retry`. Transcription and cleanup outcomes use those IDs.
+      Check success, cancellation and failure; verify the output contains no dictated words or secrets.
 - [ ] Hold Fn, say a sentence, release. The text appears in Notes, in a browser text field, in
       Slack (Electron) and in Terminal.
 - [ ] Hold Fn and stay silent for 2 s. You see "No speech detected" and nothing is pasted.
@@ -39,6 +44,13 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## AI cleanup
 
+- [ ] With AI cleanup and local fallback enabled, **Skip cleanup after local fallback** starts on.
+      Cause the cloud transcription to fail while macOS still reports a network connection: local
+      Whisper transcribes and the text is pasted/copied without *Cleaning up…* or a chat request.
+      Turn the option off, restart Skryba, and verify the choice persists. Repeat with a cloud
+      transcription failure: cleanup is attempted if connectivity allows it, and failure still
+      delivers the raw local transcript. A successful cloud transcription still gets cleanup with
+      either switch position. Local Whisper as primary never sends a chat request.
 - [ ] Turn on AI cleanup and add the replacement `claude md → CLAUDE.md`. Dictate "yyy otwórz plik
       claude md". The HUD shows *Cleaning up…* and "Otwórz plik CLAUDE.md" is pasted.
 - [ ] Dictate a question ("jaka jest stolica Francji"). The question is pasted, not an answer.
@@ -88,6 +100,11 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## Offline and bad connections
 
+- [ ] With Groq or Cloudflare, choose Settings → General → **Maximum cloud attempts → 1 — no retries**.
+      Restart Skryba: the choice stays selected. Stall a request: after about 6 seconds for a short
+      take, local fallback starts (if enabled), otherwise the recording stays in the menu.
+      Choose 2 and simulate quick connection failures: the HUD says *attempt 2 of 2*, never 3.
+      Choose 3: the previous retry behavior remains. With local Whisper, the cloud control is hidden.
 - [ ] Turn Wi-Fi off. Hold Fn: the HUD shows *Offline · will be saved for later* under *Listening…*.
       Release: you see "You're offline. The recording is saved…", and the menu-bar icon is a tray.
 - [ ] The menu lists the saved recording (time · length). Turn Wi-Fi on: within a few seconds a

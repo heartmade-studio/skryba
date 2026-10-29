@@ -97,7 +97,7 @@ final class AudioRecorder {
             duration = trimTrailingSilence(of: recorder.url, duration: duration)
         }
         let voiced = Double(voicedWindows) * Self.meterWindow
-        log.info("take: \(recorded, format: .fixed(precision: 2))s, sent \(duration, format: .fixed(precision: 2))s, voiced \(voiced, format: .fixed(precision: 2))s, peak \(self.peakLevel, format: .fixed(precision: 1)) dB")
+        log.notice("take: \(recorded, format: .fixed(precision: 2))s, sent \(duration, format: .fixed(precision: 2))s, voiced \(voiced, format: .fixed(precision: 2))s, peak \(self.peakLevel, format: .fixed(precision: 1)) dB")
         return Clip(url: recorder.url, duration: duration, voicedDuration: voiced)
     }
 

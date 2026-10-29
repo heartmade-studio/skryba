@@ -58,6 +58,7 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 | `PendingRecordings.swift` | Takes not transcribed yet: a private folder, left out of backups, emptied after 7 days. |
 | `NetworkMonitor.swift` | Knows when the Mac has no network, so the HUD says "Offline" as soon as you start. |
 | `Retry.swift` | Which failures are worth another attempt (a stalled upload, a busy server) and which aren't (no network, a rejected key). |
+| `Transcription.swift` | Records the actual transcription route and whether cloud cleanup is allowed after local fallback. |
 | `TextCleanup.swift` | Optional AI cleanup: a fixed prompt, the models per provider, and a guard that pastes the raw transcript unless the reply only removed hesitations and applied your replacements. |
 | `Replacements.swift` | Your rewrite rules for AI cleanup, one per line: "claude md → CLAUDE.md". |
 | `Hallucinations.swift` | Drops stock phrases ("Thanks for watching") and prompt echoes, but only from clips with under 0.8 s of voice. |
@@ -176,12 +177,31 @@ with **Test**, and grant two permissions:
 Skryba has no servers, accounts, analytics or telemetry. It talks to the provider you chose:
 `api.groq.com` or `api.cloudflare.com`, and once a day to `api.github.com` to check for updates.
 
+Essential timings and outcomes use macOS unified logging's disk-persisted `notice` level. Each
+submitted dictation has a random ID, `dictation started` and `dictation finished` records; its
+transcription and optional cleanup stages use the same ID. Records contain durations, providers
+and outcome codes, not dictated words, vocabulary, replacements or credentials. Saved-recording
+retries are marked separately from fresh dictations. macOS manages retention by storage quota,
+so requesting seven days cannot recover purged records or old memory-only `info` messages.
+
+To export the available history, use the full command path (some shells shadow `log`):
+
+```bash
+/usr/bin/log show --predicate 'subsystem == "pl.heartmade.skryba"' --last 1d --style compact > ~/Desktop/skryba-log.txt
+```
+
+Count unique dictation IDs, not HUD refreshes or individual retry requests. A start without a finish
+can indicate an interrupted run; it is not a confirmed failure. These records are available after
+upgrading and cannot reconstruct older history.
+
 - **What leaves your Mac:** the audio of each take, plus your vocabulary list (sent as Whisper's
   prompt), to that one provider. With AI cleanup on, the transcript and your replacements also go
   to a chat model at that same provider. If you put client names in the vocabulary,
   the provider receives them with every request. Read
   [Groq's privacy policy](https://groq.com/privacy-policy/) or Cloudflare's if that matters for
-  your use. Local Whisper sends nothing anywhere.
+  your use. Local Whisper as the primary provider sends nothing anywhere. Local fallback also skips
+  cloud cleanup by default; turning off **Skip cleanup after local fallback** explicitly allows its
+  transcript and replacements to be sent to the selected cloud for cleanup.
 - **What stays local:** your settings and vocabulary (in UserDefaults), the API key (in the
   keychain), and the last transcript (in memory only, shown under *Copy last*).
 - **Recordings** are kept in `~/Library/Application Support/Skryba/Pending` (readable only by you,
@@ -209,7 +229,10 @@ Skryba never throws a dictation away because the network is gone.
 
 - **Offline when you start:** the HUD says *Offline · will be saved for later* (or *will transcribe
   on this Mac*) while you speak. Recording works as usual.
-- **A bad connection:** all attempts share one deadline: 12 seconds for a short take, a little more
+- **A bad connection:** Settings → General → **Maximum cloud attempts** selects 1–3 total
+  attempts (default 3). **1 — no retries** tries once, then uses local fallback if enabled or
+  keeps the recording. A stalled single attempt waits about 6 seconds for a short take.
+  All attempts share one deadline: 12 seconds for a short take, a little more
   for a long one (12 s + 10% of its length). A hanging request is cut off at half of it, so there's
   time for a retry. The HUD shows each attempt with a **Cancel** button; **Cancel transcription** in
   the menu does the same. No network at all, or a rejected key, isn't retried. AI cleanup gets 30
@@ -229,13 +252,17 @@ Skryba never throws a dictation away because the network is gone.
 ## AI cleanup (optional, off by default)
 
 Whisper transcribes what it hears, including "yyy" and "eee". Turn on **Settings → AI cleanup** to
-pass each transcript through a chat model at the provider that transcribes, so the text goes
-nowhere the audio didn't:
+pass cloud transcripts through a chat model at the same provider:
 
 - **Groq:** `openai/gpt-oss-120b` by default, or `qwen/qwen3.8-27b` (preview).
 - **Cloudflare:** `@cf/openai/gpt-oss-120b` by default, `@cf/google/gemma-4-26b-a4b-it` or
   `@cf/mistralai/mistral-small-3.1-24b-instruct`.
-- **Local Whisper:** no cleanup. Nothing leaves your Mac.
+- **Local Whisper as primary:** no cleanup. Nothing leaves your Mac.
+
+**Skip cleanup after local fallback** is on by default in the AI Cleanup tab. After a failed cloud
+request, the local transcript is delivered without another cloud wait. Turn it off only if you want
+the selected cloud model to clean that local transcript too; it can add latency or fail on a bad
+connection. This option does not change cleanup after successful cloud transcription.
 
 Each provider remembers its own choice. Every model that can reason does so before answering
 (Mistral can't): in tests, GPT-OSS on its lowest setting missed misspelled replacements like

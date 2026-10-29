@@ -108,6 +108,18 @@ struct SettingsView: View {
                         """)
                     LocalWhisperStatus(problem: settings.localWhisper.setupProblem)
                 }
+                if settings.provider != .local {
+                    Picker("Maximum cloud attempts", selection: $settings.cloudAttempts) {
+                        Text("1 — no retries").tag(1)
+                        Text("2").tag(2)
+                        Text("3").tag(3)
+                    }
+                    FootnoteText("""
+                        Includes the first attempt. Choose 1 to skip connection retries and move on sooner. \
+                        The time limit may stop retries earlier. On failure, \
+                        Skryba uses local fallback if enabled, or keeps the recording for later.
+                        """)
+                }
                 TestButton(controller: controller, provider: settings.provider)
                     .id(settings.provider) // a result belongs to one provider
             }
@@ -216,6 +228,14 @@ struct SettingsView: View {
             Section {
                 Toggle("Remove hesitations and apply replacements", isOn: $settings.cleanupEnabled)
                 if settings.cleanupEnabled {
+                    if settings.provider != .local {
+                        Toggle("Skip cleanup after local fallback", isOn: $settings.skipCleanupAfterLocalFallback)
+                        FootnoteText("""
+                            On by default: when local Whisper rescues a failed cloud transcription, paste \
+                            its text immediately. Turn this off to send the local transcript to your \
+                            cloud cleanup model, which can add another wait or fail on a bad connection.
+                            """)
+                    }
                     switch settings.provider {
                     case .groq:
                         Picker("Model", selection: $settings.groqCleanupModel) { modelOptions(for: .groq) }

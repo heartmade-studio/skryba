@@ -13,6 +13,10 @@ final class Settings {
     var provider: TranscriptionProvider {
         didSet { defaults.set(provider.rawValue, forKey: Key.provider) }
     }
+    /// Total cloud requests on connection trouble, including the first one. One means no retries.
+    var cloudAttempts: Int {
+        didSet { defaults.set(cloudAttempts, forKey: Key.cloudAttempts) }
+    }
     var cloudflareAccountID: String {
         didSet { defaults.set(cloudflareAccountID, forKey: Key.cloudflareAccountID) }
     }
@@ -52,6 +56,10 @@ final class Settings {
     /// Off by default: it adds a second request per dictation, so it's slower and costs a little more.
     var cleanupEnabled: Bool {
         didSet { defaults.set(cleanupEnabled, forKey: Key.cleanupEnabled) }
+    }
+    /// On by default: a local rescue should not wait for another cloud request.
+    var skipCleanupAfterLocalFallback: Bool {
+        didSet { defaults.set(skipCleanupAfterLocalFallback, forKey: Key.skipCleanupAfterLocalFallback) }
     }
     /// The cleanup model is chosen per provider, so switching providers keeps each choice.
     var groqCleanupModel: TextCleanup.Model {
@@ -102,8 +110,8 @@ final class Settings {
         isProviderConfigured || usesLocalFallback
     }
 
-    /// AI cleanup runs at the provider that transcribes, so the text goes nowhere the audio didn't.
-    /// None for local Whisper: its text stays on this Mac.
+    /// The selected cloud's cleanup model. `Transcription` decides whether the actual route allows it.
+    /// None when local Whisper is primary: its text stays on this Mac.
     var cleanupModel: TextCleanup.Model? {
         switch provider {
         case .groq: groqCleanupModel
@@ -151,10 +159,12 @@ final class Settings {
         static let playSounds = "playSounds"
         static let checkForUpdates = "checkForUpdates"
         static let cleanupEnabled = "cleanupEnabled"
+        static let skipCleanupAfterLocalFallback = "skipCleanupAfterLocalFallback"
         static let cleanupModel = "cleanupModel" // Groq's; the name predates Cloudflare
         static let cloudflareCleanupModel = "cloudflareCleanupModel"
         static let replacements = "replacements"
         static let provider = "provider"
+        static let cloudAttempts = "cloudAttempts"
         static let cloudflareAccountID = "cloudflareAccountID"
         static let localWhisperEnabled = "localWhisperEnabled"
         static let whisperExecutablePath = "whisperExecutablePath"
@@ -182,6 +192,7 @@ final class Settings {
         apiKey = Keychain.read(.groq) ?? ""
         cloudflareToken = Keychain.read(.cloudflare) ?? ""
         provider = defaults.string(forKey: Key.provider).flatMap(TranscriptionProvider.init) ?? .groq
+        cloudAttempts = Retry.clampedAttempts(defaults.object(forKey: Key.cloudAttempts) as? Int ?? Retry.maximumAttempts)
         cloudflareAccountID = defaults.string(forKey: Key.cloudflareAccountID) ?? ""
         localWhisperEnabled = defaults.bool(forKey: Key.localWhisperEnabled)
         whisperExecutablePath = defaults.string(forKey: Key.whisperExecutablePath) ?? ""
@@ -194,6 +205,7 @@ final class Settings {
         playSounds = defaults.object(forKey: Key.playSounds) as? Bool ?? true
         checkForUpdates = defaults.object(forKey: Key.checkForUpdates) as? Bool ?? true
         cleanupEnabled = defaults.bool(forKey: Key.cleanupEnabled)
+        skipCleanupAfterLocalFallback = defaults.object(forKey: Key.skipCleanupAfterLocalFallback) as? Bool ?? true
         groqCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cleanupModel), or: .gptOss)
         cloudflareCleanupModel = Self.cleanupModel(defaults.string(forKey: Key.cloudflareCleanupModel), or: .cloudflareGptOss)
         replacements = defaults.string(forKey: Key.replacements) ?? ""
