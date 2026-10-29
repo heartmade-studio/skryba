@@ -88,6 +88,11 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## Offline and bad connections
 
+- [ ] With Groq or Cloudflare, choose Settings → General → **Maximum cloud attempts → 1 — no retries**.
+      Restart Skryba: the choice stays selected. Stall a request: after about 6 seconds for a short
+      take, local fallback starts (if enabled), otherwise the recording stays in the menu.
+      Choose 2 and simulate quick connection failures: the HUD says *attempt 2 of 2*, never 3.
+      Choose 3: the previous retry behavior remains. With local Whisper, the cloud control is hidden.
 - [ ] Turn Wi-Fi off. Hold Fn: the HUD shows *Offline · will be saved for later* under *Listening…*.
       Release: you see "You're offline. The recording is saved…", and the menu-bar icon is a tray.
 - [ ] The menu lists the saved recording (time · length). Turn Wi-Fi on: within a few seconds a

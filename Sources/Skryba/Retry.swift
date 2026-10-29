@@ -9,6 +9,10 @@ import Foundation
 enum Retry {
     static let maximumAttempts = 3
 
+    static func clampedAttempts(_ count: Int) -> Int {
+        min(max(count, 1), maximumAttempts)
+    }
+
     /// Groq usually answers a short take in under a second. 12 seconds covers a slow network with room
     /// for a retry; a long take gets more, since its upload is bigger.
     static func deadline(forClipOf duration: TimeInterval) -> Duration {
@@ -24,17 +28,19 @@ enum Retry {
         var errorDescription: String? { "Skryba stopped waiting before a response arrived." }
     }
 
-    /// Runs `operation` until it succeeds, up to `maximumAttempts` times, all within `deadline`.
+    /// Runs `operation` until it succeeds, up to `attemptLimit` times, all within `deadline`.
     /// `onAttempt` reports each attempt as it starts (for the HUD).
     @MainActor
     static func attempts<T: Sendable>(
         within deadline: Duration,
+        attemptLimit: Int = maximumAttempts,
         onAttempt: (Int) -> Void = { _ in },
         onAttemptFailure: (Int, Duration, Error) -> Void = { _, _, _ in },
         operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
         let clock = ContinuousClock()
         let end = clock.now + deadline
+        let attemptLimit = clampedAttempts(attemptLimit)
         var attempt = 1
         while true {
             onAttempt(attempt)
@@ -45,7 +51,7 @@ enum Retry {
                 onAttemptFailure(attempt, clock.now - attemptStarted, error)
                 // Another attempt only if it could still get a fair share of the time.
                 let next = clock.now + delay(after: attempt)
-                guard attempt < maximumAttempts, isTransient(error) || error is TimedOut,
+                guard attempt < attemptLimit, isTransient(error) || error is TimedOut,
                       end - next >= deadline / 4 else { throw error }
                 try await Task.sleep(until: next, clock: clock)
                 attempt += 1

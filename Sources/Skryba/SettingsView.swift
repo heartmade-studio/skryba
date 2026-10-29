@@ -108,6 +108,18 @@ struct SettingsView: View {
                         """)
                     LocalWhisperStatus(problem: settings.localWhisper.setupProblem)
                 }
+                if settings.provider != .local {
+                    Picker("Maximum cloud attempts", selection: $settings.cloudAttempts) {
+                        Text("1 — no retries").tag(1)
+                        Text("2").tag(2)
+                        Text("3").tag(3)
+                    }
+                    FootnoteText("""
+                        Includes the first attempt. Choose 1 to skip connection retries and move on sooner. \
+                        The time limit may stop retries earlier. On failure, \
+                        Skryba uses local fallback if enabled, or keeps the recording for later.
+                        """)
+                }
                 TestButton(controller: controller, provider: settings.provider)
                     .id(settings.provider) // a result belongs to one provider
             }

@@ -471,6 +471,7 @@ final class AppController {
     /// then local Whisper if the user turned it on as a fallback.
     private func transcript(of audio: Audio, vocabulary: Vocabulary) async -> Result<String, Stop> {
         let provider = settings.provider
+        let attempts = settings.cloudAttempts
         if provider == .local {
             return await transcribeLocally(audio, vocabulary: vocabulary)
         }
@@ -482,8 +483,9 @@ final class AppController {
             do {
                 return .success(try await Retry.attempts(
                     within: Retry.deadline(forClipOf: audio.duration),
+                    attemptLimit: attempts,
                     onAttempt: { attempt in
-                        hud.show(.transcribing(attempt: attempt))
+                        hud.show(.transcribing(attempt: attempt, total: attempts))
                         Self.log.info(
                             "cloud transcription request started provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public)"
                         )
@@ -581,6 +583,7 @@ final class AppController {
 
         let vocabulary = Vocabulary(settings.vocabulary)
         let started = ContinuousClock.now
+        let attempts = settings.cloudAttempts
         do {
             let text = provider == .local
                 ? try await settings.localWhisper.transcribe(
@@ -588,6 +591,7 @@ final class AppController {
                 )
                 : try await Retry.attempts(
                     within: Retry.deadline(forClipOf: clip.duration),
+                    attemptLimit: attempts,
                     operation: cloudTranscription(of: clip.url, with: provider, vocabulary: vocabulary)
                 )
             let seconds = (ContinuousClock.now - started).formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1)))

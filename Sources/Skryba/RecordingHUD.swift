@@ -13,7 +13,7 @@ final class RecordingHUD {
     enum Style: Equatable {
         case recording, handsFree, cleaningUp
         /// Sending to the cloud; attempts after the first mean the connection is struggling.
-        case transcribing(attempt: Int)
+        case transcribing(attempt: Int, total: Int)
         case transcribingLocally
         case info(String)
         case error(String)
@@ -118,7 +118,7 @@ final class RecordingHUD {
         case .recording: "recording"
         case .handsFree: "handsFree"
         case .cleaningUp: "cleaningUp"
-        case .transcribing(let attempt): "transcribing(\(attempt))"
+        case .transcribing(let attempt, let total): "transcribing(\(attempt)/\(total))"
         case .transcribingLocally: "transcribingLocally"
         case .info: "info"
         case .error: "error"
@@ -223,11 +223,11 @@ private struct HUDView: View {
                 .foregroundStyle(.red)
                 .symbolEffect(.pulse)
             Text("Hands-free · tap Fn to stop")
-        case .transcribing(let attempt):
+        case .transcribing(let attempt, let total):
             ProgressView()
                 .controlSize(.small)
                 .tint(.white)
-            Text(attempt == 1 ? "Transcribing…" : "Connection trouble · attempt \(attempt) of \(Retry.maximumAttempts)…")
+            Text(attempt == 1 ? "Transcribing…" : "Connection trouble · attempt \(attempt) of \(total)…")
             cancelButton()
         case .transcribingLocally:
             ProgressView()

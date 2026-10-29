@@ -13,6 +13,10 @@ final class Settings {
     var provider: TranscriptionProvider {
         didSet { defaults.set(provider.rawValue, forKey: Key.provider) }
     }
+    /// Total cloud requests on connection trouble, including the first one. One means no retries.
+    var cloudAttempts: Int {
+        didSet { defaults.set(cloudAttempts, forKey: Key.cloudAttempts) }
+    }
     var cloudflareAccountID: String {
         didSet { defaults.set(cloudflareAccountID, forKey: Key.cloudflareAccountID) }
     }
@@ -155,6 +159,7 @@ final class Settings {
         static let cloudflareCleanupModel = "cloudflareCleanupModel"
         static let replacements = "replacements"
         static let provider = "provider"
+        static let cloudAttempts = "cloudAttempts"
         static let cloudflareAccountID = "cloudflareAccountID"
         static let localWhisperEnabled = "localWhisperEnabled"
         static let whisperExecutablePath = "whisperExecutablePath"
@@ -182,6 +187,7 @@ final class Settings {
         apiKey = Keychain.read(.groq) ?? ""
         cloudflareToken = Keychain.read(.cloudflare) ?? ""
         provider = defaults.string(forKey: Key.provider).flatMap(TranscriptionProvider.init) ?? .groq
+        cloudAttempts = Retry.clampedAttempts(defaults.object(forKey: Key.cloudAttempts) as? Int ?? Retry.maximumAttempts)
         cloudflareAccountID = defaults.string(forKey: Key.cloudflareAccountID) ?? ""
         localWhisperEnabled = defaults.bool(forKey: Key.localWhisperEnabled)
         whisperExecutablePath = defaults.string(forKey: Key.whisperExecutablePath) ?? ""

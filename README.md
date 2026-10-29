@@ -209,7 +209,10 @@ Skryba never throws a dictation away because the network is gone.
 
 - **Offline when you start:** the HUD says *Offline · will be saved for later* (or *will transcribe
   on this Mac*) while you speak. Recording works as usual.
-- **A bad connection:** all attempts share one deadline: 12 seconds for a short take, a little more
+- **A bad connection:** Settings → General → **Maximum cloud attempts** selects 1–3 total
+  attempts (default 3). **1 — no retries** tries once, then uses local fallback if enabled or
+  keeps the recording. A stalled single attempt waits about 6 seconds for a short take.
+  All attempts share one deadline: 12 seconds for a short take, a little more
   for a long one (12 s + 10% of its length). A hanging request is cut off at half of it, so there's
   time for a retry. The HUD shows each attempt with a **Cancel** button; **Cancel transcription** in
   the menu does the same. No network at all, or a rejected key, isn't retried. AI cleanup gets 30
