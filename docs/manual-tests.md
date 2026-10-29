@@ -103,7 +103,7 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] With Groq or Cloudflare, choose Settings → General → **Maximum cloud attempts → 1 — no retries**.
       Restart Skryba: the choice stays selected. Stall a request: after about 6 seconds for a short
       take, local fallback starts (if enabled), otherwise the recording stays in the menu.
-      Choose 2 and simulate quick connection failures: the HUD says *attempt 2 of 2*, never 3.
+      Choose 2 and simulate quick connection failures: the HUD says *attempt 2*, never 3.
       Choose 3: the previous retry behavior remains. With local Whisper, the cloud control is hidden.
 - [ ] Turn Wi-Fi off. Hold Fn: the HUD shows *Offline · will be saved for later* under *Listening…*.
       Release: you see "You're offline. The recording is saved…", and the menu-bar icon is a tray.
@@ -114,7 +114,7 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] **Delete…** asks for confirmation; after Delete the recording is gone from the menu and from
       `~/Library/Application Support/Skryba/Pending`.
 - [ ] Simulate a stalled connection (Network Link Conditioner, *100% Loss*). Dictate: the HUD shows
-      *Transcribing…* with **Cancel**, then *Connection trouble · attempt 2 of 3…*. Click **Cancel**
+      *Transcribing…* with **Cancel**, then *Connection trouble · attempt 2…* (no promised total). Click **Cancel**
       in the HUD: the focus stays in your app, and the recording is saved. Repeat with **Cancel
       transcription** in the menu.
 - [ ] With a stalled connection and no cancel, a short take gives up within about 12 s and is saved

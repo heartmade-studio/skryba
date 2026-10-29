@@ -223,11 +223,12 @@ private struct HUDView: View {
                 .foregroundStyle(.red)
                 .symbolEffect(.pulse)
             Text("Hands-free · tap Fn to stop")
-        case .transcribing(let attempt, let total):
+        case .transcribing(let attempt, _):
             ProgressView()
                 .controlSize(.small)
                 .tint(.white)
-            Text(attempt == 1 ? "Transcribing…" : "Connection trouble · attempt \(attempt) of \(total)…")
+            // The setting is a maximum, not a promise: the shared deadline may stop retries early.
+            Text(attempt == 1 ? "Transcribing…" : "Connection trouble · attempt \(attempt)…")
             cancelButton()
         case .transcribingLocally:
             ProgressView()
