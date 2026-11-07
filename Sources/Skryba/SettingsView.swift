@@ -29,6 +29,8 @@ struct SettingsView: View {
     @State private var apiKeyStatus: CredentialStatus?
     @State private var cloudflareTokenDraft: String
     @State private var cloudflareTokenStatus: CredentialStatus?
+    @State private var openAIKeyDraft: String
+    @State private var openAIKeyStatus: CredentialStatus?
 
     enum CredentialStatus {
         case saved, failed
@@ -38,6 +40,7 @@ struct SettingsView: View {
         self.controller = controller
         _apiKeyDraft = State(initialValue: controller.settings.apiKey)
         _cloudflareTokenDraft = State(initialValue: controller.settings.cloudflareToken)
+        _openAIKeyDraft = State(initialValue: controller.settings.openAIKey)
     }
 
     private enum Tab: String, CaseIterable {
@@ -88,6 +91,14 @@ struct SettingsView: View {
                 switch settings.provider {
                 case .groq:
                     groqKeyField
+                case .openai:
+                    CredentialField(
+                        title: "OpenAI API key", prompt: "sk-…", draft: $openAIKeyDraft,
+                        saved: settings.openAIKey, status: $openAIKeyStatus, save: saveOpenAIKey
+                    )
+                    FootnoteText("OpenAI transcribes with gpt-transcribe. Audio and vocabulary hints go to OpenAI; optional AI cleanup also sends the transcript and your replacements there.")
+                    Link("Get an API key at platform.openai.com", destination: URL(string: "https://platform.openai.com/api-keys")!)
+                        .font(.callout)
                 case .cloudflare:
                     TextField("Account ID", text: $settings.cloudflareAccountID, prompt: Text("32 hex characters"))
                     CredentialField(
@@ -217,7 +228,7 @@ struct SettingsView: View {
             } header: {
                 Text("Vocabulary")
             } footer: {
-                FootnoteText("Comma-separated names Whisper should spell right. Near misses like “Hrtmade” are fixed after transcription.")
+                FootnoteText("Comma-separated names the model should spell right. Near misses like “Hrtmade” are fixed after transcription.")
             }
         }
     }
@@ -227,7 +238,8 @@ struct SettingsView: View {
         return Form {
             Section {
                 Toggle("Remove hesitations and apply replacements", isOn: $settings.cleanupEnabled)
-                if settings.cleanupEnabled {
+                    .disabled(settings.cleanupModel == nil)
+                if settings.cleanupEnabled, settings.cleanupModel != nil {
                     if settings.provider != .local {
                         Toggle("Skip cleanup after local fallback", isOn: $settings.skipCleanupAfterLocalFallback)
                         FootnoteText("""
@@ -241,6 +253,8 @@ struct SettingsView: View {
                         Picker("Model", selection: $settings.groqCleanupModel) { modelOptions(for: .groq) }
                     case .cloudflare:
                         Picker("Model", selection: $settings.cloudflareCleanupModel) { modelOptions(for: .cloudflare) }
+                    case .openai:
+                        LabeledContent("Model", value: TextCleanup.Model.luna.displayName)
                     case .local:
                         EmptyView()
                     }
@@ -252,7 +266,7 @@ struct SettingsView: View {
                 FootnoteText(cleanupFootnote)
             }
 
-            if settings.cleanupEnabled {
+            if settings.cleanupEnabled, settings.cleanupModel != nil {
                 Section {
                     TextEditor(text: $settings.replacements)
                         .font(.callout.monospaced())
@@ -341,8 +355,10 @@ struct SettingsView: View {
                 A Cloudflare Workers AI language model \(what). The free daily allocation covers about 250 \
                 dictations with GPT-OSS, 500 with Gemma and 1,000 with Mistral, which doesn't think first.
                 """
+        case .openai:
+            return "An OpenAI GPT-6 Luna model with medium reasoning \(what). It uses the same API key as transcription and is billed separately by OpenAI."
         case .local:
-            return "AI cleanup needs Groq or Cloudflare as the provider. With local Whisper, nothing leaves this Mac."
+            return "AI cleanup needs Groq, Cloudflare or OpenAI as the provider. With local Whisper, nothing leaves this Mac."
         }
     }
 
@@ -365,6 +381,10 @@ extension SettingsView {
 
     private func saveCloudflareToken() {
         cloudflareTokenStatus = controller.settings.saveCloudflareToken(cloudflareTokenDraft) ? .saved : .failed
+    }
+
+    private func saveOpenAIKey() {
+        openAIKeyStatus = controller.settings.saveOpenAIKey(openAIKeyDraft) ? .saved : .failed
     }
 
     private func chooseModel() {

@@ -40,7 +40,7 @@ final class AudioRecorder {
     private let log = Logger(subsystem: "pl.heartmade.skryba", category: "audio")
 
     /// Recordings live only here, inside the per-user temporary directory, and only for one take.
-    static let directory = FileManager.default.temporaryDirectory
+    nonisolated static let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("pl.heartmade.skryba", isDirectory: true)
 
     /// Deletes any recording left behind by a crash or force quit. Call at launch and at quit,

@@ -8,6 +8,7 @@ enum Keychain {
     enum Account: String {
         case groq = "groq-api-key"
         case cloudflare = "cloudflare-api-token"
+        case openai = "openai-api-key"
     }
 
     private static let service = "pl.heartmade.skryba"

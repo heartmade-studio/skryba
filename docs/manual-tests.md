@@ -22,6 +22,42 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 - [ ] Say a sentence ending in a vocabulary term, then stay silent for 3 s before releasing. The log
       shows `sent` about 2.5 s shorter than `take`, the last word is intact, and nothing follows it.
 - [ ] Fn+⌫ deletes forward and Fn+↑ pages up, with no recording, HUD or sound.
+- [ ] With Groq and AI cleanup off, dictate for 60–130 s: first continuously, then with 5–10 s
+      pauses in the middle. Include Polish words such as "już", "się" and "żółć" before and after
+      each pause. Compare every part with what was said, including punctuation and repeated words.
+      Repeat with Language set to Polish and Auto-detect. Verify that words near the cuts are
+      neither truncated nor duplicated; note the take ID if the sporadic problem returns.
+- [ ] A Groq take under 30 s logs `groq audio parts: count=1`; a longer one has multiple parts.
+      Confidence counts remain in a normal log export without `--info`, with no dictated text.
+      Each `groq audio part decoded` has a part number, character count and core time interval;
+      `groq audio joined` confirms successful assembly, all with the same random run ID. A rejected
+      join logs a specific `transcript_*` reason, never words or provider error text.
+      `groq seam analysis` identifies each boundary and reports the exact rejection criterion,
+      token counts, alignment score, matches and edits. Verify that none of these fields contains
+      transcript text. Save a controlled test recording before retrying: successful delivery deletes
+      the Pending original, so old numeric logs alone cannot reconstruct a rejected overlap.
+- [ ] For an explicitly requested controlled reproduction only, quit Skryba and run
+      `defaults write pl.heartmade.skryba captureNextDiagnosticTake -bool true`, then launch it.
+      A short status dictation must not consume the request. Record the agreed 40–120 s test:
+      `diagnostic recording preserved` precedes the first cloud request, and its unchanged audio
+      remains in `~/Library/Application Support/Skryba/Diagnostic` after successful delivery removes
+      Pending. The request turns off after one copy; subsequent takes aren't copied. Check 0700/0600
+      permissions and backup exclusion. A failed copy must prevent uploading/deleting the original.
+      Place a long pause near the cut: `pause_joins` is nonzero and the next part has `from_ms=0`.
+      Both utterances are kept even when the provider timestamps a final word late into the silence.
+      Test continuous speech too: padded parts have `from_ms=3000` and share six seconds of audio.
+      `groq audio joined` reports `method=text_overlap`, and only the part requests are sent, with no
+      whole-take recovery. Include a repeated phrase and Polish words at cuts; verify every word once.
+      If the shared text is too different, `groq part repair started` identifies the boundary and
+      the specific part being retried; `completed` reports its new character count. At most two
+      parts are retried, and no `groq whole-take recovery` request is made. Every part reports its
+      core `voiced_ms`; a long pause followed by a brief ending must not look like missing speech.
+      All events use the dictation ID. Cancel during repair: no partial text is pasted/copied, and
+      the original stays saved. Exhaust repair attempts: the original also stays in Pending.
+      Cancel or interrupt a long transcription: its original recording stays in Pending for retry,
+      and `pl.heartmade.skryba/chunks-*` temporary directories are removed (also after a crash and
+      relaunch). Retry copies the whole
+      transcript, never just the parts that finished before the interruption.
 
 ## Hands-free (1.2.2)
 
@@ -62,8 +98,14 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
       `cloudflare chat @cf/…` with a timing. Switch back to Groq: its earlier choice is kept.
 - [ ] With Gemma on Cloudflare, click **Skip** while the HUD shows *Cleaning up…*: the plain
       transcript is pasted at once, with no warning, and the log says `cleanup skipped by the user`.
+- [ ] Switch the provider to OpenAI: AI Cleanup can be enabled and shows **GPT-6 Luna (medium)**.
+      Repeat the hesitation, replacement and dictated-question checks above. The log shows
+      `openai cleanup` and `cleanup finished ... provider=openai`, with no Groq or Cloudflare request.
+- [ ] During OpenAI cleanup, use **Skip**: the plain transcript is delivered immediately. A failed,
+      incomplete or refused cleanup also delivers the plain transcript and a warning. Saved recordings
+      are not lost. Local fallback skips cleanup by default; opting in uses OpenAI only.
 - [ ] Switch the provider to Local Whisper: the Cleanup tab shows no picker and says cleanup needs
-      Groq or Cloudflare. A dictation pastes the plain text, with no chat request in the log.
+      Groq, Cloudflare or OpenAI. A dictation pastes the plain text, with no cleanup request in the log.
 
 ## Safety
 
@@ -100,9 +142,10 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
 
 ## Offline and bad connections
 
-- [ ] With Groq or Cloudflare, choose Settings → General → **Maximum cloud attempts → 1 — no retries**.
-      Restart Skryba: the choice stays selected. Stall a request: after about 6 seconds for a short
-      take, local fallback starts (if enabled), otherwise the recording stays in the menu.
+- [ ] With Groq, Cloudflare or OpenAI, choose Settings → General → **Maximum cloud attempts → 1 — no retries**.
+      Restart Skryba: the choice stays selected. Stall a request: after about 6 seconds on Groq or
+      30 seconds on Cloudflare or OpenAI for a short take, local fallback starts (if enabled), otherwise the
+      recording stays in the menu.
       Choose 2 and simulate quick connection failures: the HUD says *attempt 2*, never 3.
       Choose 3: the previous retry behavior remains. With local Whisper, the cloud control is hidden.
 - [ ] Turn Wi-Fi off. Hold Fn: the HUD shows *Offline · will be saved for later* under *Listening…*.
@@ -117,19 +160,32 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
       *Transcribing…* with **Cancel**, then *Connection trouble · attempt 2…* (no promised total). Click **Cancel**
       in the HUD: the focus stays in your app, and the recording is saved. Repeat with **Cancel
       transcription** in the menu.
-- [ ] With a stalled connection and no cancel, a short take gives up within about 12 s and is saved
+- [ ] With a stalled connection and no cancel, a short take gives up within about 12 s on Groq or
+      60 s on Cloudflare or OpenAI and is saved
       (or goes to local Whisper, when that's the fallback).
 - [ ] Hold Fn and stay silent or just cough (voice under 0.8 s). Nothing is saved to the menu.
 - [ ] Quit Skryba with a saved recording, relaunch: it is still listed and not sent.
 
 ## Providers
 
+- [ ] Choose OpenAI, save an API key, relaunch: OpenAI and the saved key are retained. **Test** and
+      a fresh dictation both work without Groq or Cloudflare credentials. The log shows
+      `openai transcription` with timing, never dictated text, vocabulary or credentials.
+- [ ] With OpenAI, try Polish, English and Auto-detect, including vocabulary names and a take over
+      30 s. The whole recording is transcribed and local spelling corrections still apply.
+- [ ] A wrong OpenAI key shows "OpenAI rejected the credentials…" and saves the take. Correct the
+      key and retry from the menu: the result goes to the clipboard. Deleting the key with Save
+      makes the provider unconfigured, without affecting the other providers' credentials.
+- [ ] With OpenAI selected, enable AI Cleanup using only the OpenAI key. Disable it and dictate:
+      there is no cleanup request. Switching providers preserves the enabled/disabled preference.
+- [ ] With OpenAI, cancel a stalled upload: focus stays in the target app and the take stays saved.
+      With local fallback enabled, an offline or failed OpenAI take transcribes locally.
 - [ ] Choose Cloudflare, enter the account ID and a Workers AI token, Save. Dictate a Polish
       sentence: it is pasted. The log shows `cloudflare transcription` with a timing.
 - [ ] A wrong Cloudflare token shows "Cloudflare rejected the credentials…" and saves the take.
 - [ ] With Cloudflare chosen and AI cleanup on, no Groq key is needed: cleanup goes to Cloudflare.
 - [ ] **Test** in Settings → General, for each provider: speak for 4 s; it shows your words and the
-      time taken. Write down the Groq and Cloudflare times for a short and a long sentence.
+      time taken. Write down the Groq, Cloudflare and OpenAI times for a short and a long sentence.
 - [ ] Choose **Local Whisper** as the provider with Wi-Fi on: the log shows no network request,
       and the HUD says *Transcribing on this Mac…*.
 - [ ] Enable Settings → Offline → local Whisper, choose a model: it says "Ready". With Wi-Fi off,

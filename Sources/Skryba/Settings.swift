@@ -8,6 +8,8 @@ final class Settings {
     private(set) var apiKey: String
     /// Mirrors the keychain; change it only through `saveCloudflareToken`.
     private(set) var cloudflareToken: String
+    /// Mirrors the keychain; change it only through `saveOpenAIKey`.
+    private(set) var openAIKey: String
     /// What turns speech into text. There is no chain between providers: one is used, plus local
     /// Whisper as an optional fallback for the cloud ones.
     var provider: TranscriptionProvider {
@@ -76,7 +78,7 @@ final class Settings {
     @ObservationIgnored private let defaults = UserDefaults.standard
 
     enum TranscriptionProvider: String, CaseIterable, Identifiable {
-        case groq, cloudflare
+        case groq, cloudflare, openai
         /// whisper.cpp on this Mac: audio never leaves it.
         case local
 
@@ -86,6 +88,7 @@ final class Settings {
             switch self {
             case .groq: "Groq"
             case .cloudflare: "Cloudflare Workers AI"
+            case .openai: "OpenAI"
             case .local: "Local Whisper (this Mac)"
             }
         }
@@ -96,6 +99,7 @@ final class Settings {
         switch provider {
         case .groq: !apiKey.isEmpty
         case .cloudflare: CloudflareClient.isValidAccountID(cloudflare.accountID) && !cloudflareToken.isEmpty
+        case .openai: !openAIKey.isEmpty
         case .local: localWhisper.setupProblem == nil
         }
     }
@@ -111,11 +115,12 @@ final class Settings {
     }
 
     /// The selected cloud's cleanup model. `Transcription` decides whether the actual route allows it.
-    /// None when local Whisper is primary: its text stays on this Mac.
+    /// Local primary text stays on this Mac.
     var cleanupModel: TextCleanup.Model? {
         switch provider {
         case .groq: groqCleanupModel
         case .cloudflare: cloudflareCleanupModel
+        case .openai: .luna
         case .local: nil
         }
     }
@@ -187,10 +192,19 @@ final class Settings {
         return true
     }
 
+    /// Returns false if the keychain refused the write; the previous key then stays in place.
+    func saveOpenAIKey(_ key: String) -> Bool {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Keychain.save(trimmed, for: .openai) else { return false }
+        openAIKey = trimmed
+        return true
+    }
+
     init() {
         let defaults = UserDefaults.standard
         apiKey = Keychain.read(.groq) ?? ""
         cloudflareToken = Keychain.read(.cloudflare) ?? ""
+        openAIKey = Keychain.read(.openai) ?? ""
         provider = defaults.string(forKey: Key.provider).flatMap(TranscriptionProvider.init) ?? .groq
         cloudAttempts = Retry.clampedAttempts(defaults.object(forKey: Key.cloudAttempts) as? Int ?? Retry.maximumAttempts)
         cloudflareAccountID = defaults.string(forKey: Key.cloudflareAccountID) ?? ""

@@ -7,12 +7,13 @@ Hold **Fn**, speak, let go: your words appear as text wherever your cursor is.
 Skryba (Polish for *scribe*) is a small open-source macOS menu-bar app for push-to-talk dictation.
 It records while you hold the Fn (🌐) key, or a shortcut of your choice. It sends the audio to
 **Whisper large-v3**, hosted by [Groq](https://groq.com) or, if you prefer, its turbo variant on
-[Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/), and pastes the transcript
+[Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/), or to OpenAI's
+[`gpt-transcribe`](https://developers.openai.com/api/docs/guides/speech-to-text), and pastes the transcript
 into the text field you were typing in. No internet? The take is kept, and you can transcribe it
 later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-27 Swift files, about 4,000 lines including comments.
+30 Swift files, about 4,000 lines including comments.
 
 **Status: 1.6.7.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
@@ -37,7 +38,8 @@ While a recording waits to be transcribed, the quill becomes a tray.
 hold Fn      ──► AVAudioRecorder (16 kHz mono AAC, temp file) + level meter
 release      ──► discard if the level meter heard no voice, cut the silence after the last word
              ──► save the take to a private queue (kept until it's transcribed)
-             ──► Groq (whisper-large-v3) or Cloudflare (-turbo); visible, cancellable retries
+             ──► Groq (whisper-large-v3), Cloudflare (-turbo) or OpenAI (gpt-transcribe)
+                 visible, cancellable retries
                  offline or failed? whisper.cpp on this Mac if enabled, else keep it for later
              ──► drop text Whisper invents on near-silence, fix vocabulary near misses
              ──► optional: AI cleanup of hesitations and your replacements (a chat model at the same provider)
@@ -51,11 +53,16 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 | `FnGesture.swift` | Everything a Fn press means, in one place: hold to talk, a triple tap for hands-free, a tap to stop. A cancelled take resets it, so no half-finished gesture outlives it. |
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. Cuts the trailing silence, where Whisper would otherwise invent words. |
-| `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing; one retry at temperature 0.2 when a segment looks garbled. |
+| `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing; one retry at temperature 0.2 when a segment looks garbled. A long take's parts and replies are kept across retry attempts; an empty part with measured speech is repaired, never pasted as a gap. |
+| `Multipart.swift` | The multipart/form-data upload body shared by Groq and OpenAI transcription. |
+| `AudioChunks.swift` | Splits Groq takes longer than 30 seconds into independent windows near pauses. Confirmed silence needs no overlap; other cuts share six seconds of audio. Temporary WAVs are deleted on success, failure or cancellation. |
+| `TranscriptJoiner.swift` | Aligns the shared suffix/prefix of adjacent transcripts, independently of word timestamps, then slices the original text at whole-word boundaries. |
 | `CloudflareClient.swift` | Whisper large-v3-turbo through Cloudflare Workers AI, as an alternative to Groq, plus its chat models for AI cleanup. |
-| `ChatCompletion.swift` | The OpenAI-style chat request that both providers accept, for AI cleanup. |
+| `OpenAIClient.swift` | OpenAI gpt-transcribe through multipart file uploads, plus GPT-6 Luna cleanup through Responses with medium reasoning and storage disabled. |
+| `ChatCompletion.swift` | The shared cleanup request, sent directly to Groq and Cloudflare or mapped to OpenAI Responses. |
 | `LocalWhisper.swift` | Optional offline transcription: converts the take to WAV with AVFoundation and runs `whisper-cli` directly (no shell). Cancelling or a timeout stops it. |
 | `PendingRecordings.swift` | Takes not transcribed yet: a private folder, left out of backups, emptied after 7 days. |
+| `DiagnosticRecording.swift` | Explicit one-shot preservation of a controlled 40–120 s test take before any cloud request. Off by default; private, excluded from backups, expires after 7 days. |
 | `NetworkMonitor.swift` | Knows when the Mac has no network, so the HUD says "Offline" as soon as you start. |
 | `Retry.swift` | Which failures are worth another attempt (a stalled upload, a busy server) and which aren't (no network, a rejected key). |
 | `Transcription.swift` | Records the actual transcription route and whether cloud cleanup is allowed after local fallback. |
@@ -72,10 +79,18 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 
 - macOS 14 Sonoma or later. Apple Silicon is tested; Intel should work but is untested.
 - A Groq API key. The free tier is enough: [console.groq.com/keys](https://console.groq.com/keys).
-  Or a Cloudflare account ID and a Workers AI API token.
+  Or a Cloudflare account ID and a Workers AI API token, or an OpenAI API key with API billing enabled.
 - Optional, for offline use: [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
   (`brew install whisper-cpp`) and a multilingual model file.
 - To build from source: Xcode 16 or later (for the Swift 6 toolchain)
+
+For OpenAI, choose **Settings → General → Provider → OpenAI**, save your API key, then use
+**Test**. Skryba uses `gpt-transcribe`, sends the chosen language as `languages[]` (omitted for
+auto-detection), and vocabulary terms as `keywords[]`. Terms containing `<`, `>`, carriage returns
+or line feeds are omitted from the hints because OpenAI rejects them. Local vocabulary corrections
+still apply. Enable **Settings → AI Cleanup** for GPT-6 Luna (`gpt-6-luna`) with medium reasoning,
+using the same OpenAI key. Cleanup removes hesitations and applies your replacements; it uses the
+Responses API with `store: false`. A failed, incomplete or rejected cleanup keeps the plain transcript.
 
 ## Download
 
@@ -175,7 +190,7 @@ with **Test**, and grant two permissions:
 ## Privacy
 
 Skryba has no servers, accounts, analytics or telemetry. It talks to the provider you chose:
-`api.groq.com` or `api.cloudflare.com`, and once a day to `api.github.com` to check for updates.
+`api.groq.com`, `api.cloudflare.com` or `api.openai.com`, and once a day to `api.github.com` to check for updates.
 
 Essential timings and outcomes use macOS unified logging's disk-persisted `notice` level. Each
 submitted dictation has a random ID, `dictation started` and `dictation finished` records; its
@@ -195,8 +210,8 @@ can indicate an interrupted run; it is not a confirmed failure. These records ar
 upgrading and cannot reconstruct older history.
 
 - **What leaves your Mac:** the audio of each take, plus your vocabulary list (sent as Whisper's
-  prompt), to that one provider. With AI cleanup on, the transcript and your replacements also go
-  to a chat model at that same provider. If you put client names in the vocabulary,
+  prompt or OpenAI keyword hints), to that one provider. With AI cleanup on at any cloud provider,
+  the transcript and your replacements also go to a chat model at that same provider. If you put client names in the vocabulary,
   the provider receives them with every request. Read
   [Groq's privacy policy](https://groq.com/privacy-policy/) or Cloudflare's if that matters for
   your use. Local Whisper as the primary provider sends nothing anywhere. Local fallback also skips
@@ -231,9 +246,10 @@ Skryba never throws a dictation away because the network is gone.
   on this Mac*) while you speak. Recording works as usual.
 - **A bad connection:** Settings → General → **Maximum cloud attempts** selects 1–3 total
   attempts (default 3). **1 — no retries** tries once, then uses local fallback if enabled or
-  keeps the recording. A stalled single attempt waits about 6 seconds for a short take.
-  All attempts share one deadline: 12 seconds for a short take, a little more
-  for a long one (12 s + 10% of its length). A hanging request is cut off at half of it, so there's
+  keeps the recording. All attempts share one deadline: **Groq** gets 12 s + 10% of the take's length,
+  plus 5 s for each extra part of a take longer than 30 s; a retry resumes at the first part
+  without a reply. **Cloudflare and OpenAI** get 60 s + 20%, allowing more time for file inference. A stalled single attempt
+  waits at most half that budget (about 6 s on Groq or 30 s on Cloudflare/OpenAI for a short take), so there's
   time for a retry. The HUD shows each attempt with a **Cancel** button; **Cancel transcription** in
   the menu does the same. No network at all, or a rejected key, isn't retried. AI cleanup gets 30
   seconds plus a little per word, then the plain transcript is pasted; **Skip** pastes it at once.
@@ -245,7 +261,7 @@ Skryba never throws a dictation away because the network is gone.
   multilingual model from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp/tree/main),
   for example `ggml-large-v3-turbo.bin` (1.6 GB, best for Polish) or `ggml-small.bin` (0.5 GB,
   faster), and choose it in Settings → Offline. Then either pick **Local Whisper** as the provider
-  (audio never leaves your Mac), or keep Groq or Cloudflare and turn local Whisper on as the
+  (audio never leaves your Mac), or keep Groq, Cloudflare or OpenAI and turn local Whisper on as the
   fallback for when the cloud is offline or fails. **Test** in Settings records a few seconds and
   shows the text and how long it took. AI cleanup is skipped while offline.
 
@@ -257,6 +273,8 @@ pass cloud transcripts through a chat model at the same provider:
 - **Groq:** `openai/gpt-oss-120b` by default, or `qwen/qwen3.8-27b` (preview).
 - **Cloudflare:** `@cf/openai/gpt-oss-120b` by default, `@cf/google/gemma-4-26b-a4b-it` or
   `@cf/mistralai/mistral-small-3.1-24b-instruct`.
+- **OpenAI:** `gpt-6-luna` with medium reasoning through Responses, using the same key as transcription.
+  Cleanup requests set `store: false` and do not share conversation history between dictations.
 - **Local Whisper as primary:** no cleanup. Nothing leaves your Mac.
 
 **Skip cleanup after local fallback** is on by default in the AI Cleanup tab. After a failed cloud
@@ -316,6 +334,18 @@ Cloudflare dashboard shows the real numbers.
   identity, rebuilds signed by the same Team ID should retain the grant; ad-hoc builds still reset it.
 - **"Shortcut is already taken."** Another app registered it. Pick a different one.
 - **The text comes out in the wrong language.** Set the language explicitly in Settings.
+- **Long Groq takes occasionally lose letters or truncate words after a pause.** Takes over 30 s
+  are split into independent windows of about 20 s to limit the spread of a bad decode. The first
+  part detects the language for the rest when Language is Auto-detect. Cuts in sustained silence
+  join consecutive audio ranges directly; other cuts share six seconds of audio. Their transcripts
+  are aligned by matching the suffix of one part to the prefix of the next. Word timing metadata is
+  not required: shifted or zero-duration timestamps cannot drop words. Original spelling and punctuation
+  are preserved, including Polish letters and repeated words. This is a mitigation, not a guarantee
+  against recognition errors. If shared text is too different to align, Skryba retries only a part at
+  that boundary, starting with the shortest decode relative to measured speech. There are at most
+  two targeted repairs per operation, at Whisper's fallback temperature. A join failure never uploads
+  the original recording as a whole. All parts, confidence retries and repairs share one cancellable
+  cloud deadline. If repair fails, the original stays saved for a manual retry; partial text isn't delivered.
 - **Takes are discarded as "No speech detected", or noise gets through.** Watch the logged levels
   and request timings, then open an issue with a few lines:
   ```bash

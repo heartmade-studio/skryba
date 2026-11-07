@@ -1,8 +1,8 @@
 # AGENTS.md — skryba
 
 Public, open-source macOS menu-bar app (Swift 6, SwiftUI + AppKit, no dependencies) for
-push-to-talk dictation via Groq Whisper (or Cloudflare Workers AI, with optional local
-whisper.cpp). Published under the `heartmade-studio` GitHub org as a showcase, so the code must
+push-to-talk dictation via Groq Whisper, Cloudflare Workers AI or OpenAI gpt-transcribe (with optional
+local whisper.cpp). Published under the `heartmade-studio` GitHub org as a showcase, so the code must
 stay small, readable, and well commented.
 
 ## Build
@@ -39,11 +39,13 @@ stay small, readable, and well commented.
   manual retry from the menu; nothing is re-sent by itself. The queue stays private, out of backups,
   and expires after `PendingRecordings.maximumAge`. A cancelled recording (as opposed to a cancelled
   transcription), a too-short or a silent take is deleted.
-- Keep the product simple: one provider (`Settings.provider`: Groq, Cloudflare or local Whisper),
+- Keep the product simple: one provider (`Settings.provider`: Groq, Cloudflare, OpenAI or local Whisper),
   plus local Whisper as an opt-in fallback for the cloud ones. No primary/fallback matrix, no
   cloud-to-cloud chain. `whisper-cli` starts directly (argv, never a shell). Every wait on the
   network or on whisper-cli must be visible in the HUD and cancellable (`cancelTranscription`).
   All cloud attempts share one deadline (`Retry.attempts`); never give a request its own long timeout.
+- OpenAI cleanup uses GPT-6 Luna (`gpt-6-luna`) with medium reasoning through Responses, with
+  `store: false`. Never route its transcript to Groq or Cloudflare for cleanup.
 - Retries from the menu copy the transcript to the clipboard; only a fresh take pastes.
 - AI cleanup is optional, and it only removes hesitations and applies the user's `Replacements`. It
   must never lose a dictation: on any error, or a reply that changed anything else

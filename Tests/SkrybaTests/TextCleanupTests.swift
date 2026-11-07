@@ -124,6 +124,7 @@ struct CleanupModelTests {
     @Test func eachProviderOffersOnlyItsOwnModels() {
         #expect(TextCleanup.Model.models(for: .groq) == [.gptOss, .qwen])
         #expect(TextCleanup.Model.models(for: .cloudflare) == [.cloudflareGptOss, .gemma, .mistral])
+        #expect(TextCleanup.Model.models(for: .openai) == [.luna])
         #expect(TextCleanup.Model.models(for: .local).isEmpty)
     }
 
@@ -137,5 +138,7 @@ struct CleanupModelTests {
         #expect(try json(.gemma).contains(#""chat_template_kwargs":{"enable_thinking":true}"#))
         #expect(try json(.qwen).contains(#""reasoning_effort":"default""#))
         #expect(try !json(.mistral).contains("reasoning"))
+        #expect(try json(.luna).contains(#""reasoning_effort":"medium""#))
+        #expect(try !json(.luna).contains("include_reasoning"))
     }
 }
