@@ -1,12 +1,12 @@
 import Foundation
 
-/// Something that runs an OpenAI-style chat completion: Groq, or Cloudflare Workers AI.
+/// Something that runs a cleanup request: Groq, Cloudflare Workers AI, or OpenAI Responses.
 /// AI cleanup uses the provider that transcribes, so the text goes nowhere the audio didn't.
 protocol ChatClient: Sendable {
     func chat(_ request: ChatRequest) async throws -> String
 }
 
-/// One chat completion request in the OpenAI format, which both providers accept.
+/// A shared cleanup request. Groq and Cloudflare accept this format directly; OpenAI maps it to Responses.
 /// Optional fields are omitted from the JSON when nil; each model uses only the ones it knows.
 struct ChatRequest: Encodable, Sendable {
     /// A thinking model sends nothing until it has an answer, and URLSession's timeout measures idle
@@ -22,7 +22,7 @@ struct ChatRequest: Encodable, Sendable {
     let messages: [Message]
     let temperature: Double
     let maxCompletionTokens: Int
-    /// GPT-OSS and Qwen: how long the model thinks before answering.
+    /// Reasoning models: how long to think before answering; mapped to reasoning.effort on OpenAI.
     var reasoningEffort: String?
     /// Groq only: false keeps the reasoning out of the reply.
     var includeReasoning: Bool?

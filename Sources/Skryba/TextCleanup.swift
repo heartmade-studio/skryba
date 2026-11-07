@@ -16,6 +16,8 @@ struct TextCleanup {
         case cloudflareGptOss = "@cf/openai/gpt-oss-120b"
         case gemma = "@cf/google/gemma-4-26b-a4b-it"
         case mistral = "@cf/mistralai/mistral-small-3.1-24b-instruct"
+        // OpenAI
+        case luna = "gpt-6-luna"
 
         var id: String { rawValue }
 
@@ -25,6 +27,7 @@ struct TextCleanup {
             case .qwen: "Qwen 3.8 27B (preview)"
             case .gemma: "Gemma 4 26B"
             case .mistral: "Mistral Small 3.1 24B"
+            case .luna: "GPT-6 Luna (medium)"
             }
         }
 
@@ -33,6 +36,7 @@ struct TextCleanup {
             switch self {
             case .gptOss, .qwen: .groq
             case .cloudflareGptOss, .gemma, .mistral: .cloudflare
+            case .luna: .openai
             }
         }
 
@@ -58,6 +62,8 @@ struct TextCleanup {
                 request.includeReasoning = false
             case .cloudflareGptOss:
                 request.reasoningEffort = "medium" // Cloudflare returns the reasoning in its own field
+            case .luna:
+                request.reasoningEffort = "medium" // OpenAIClient maps this to Responses reasoning.effort
             case .gemma:
                 request.chatTemplateKwargs = ["enable_thinking": true]
             case .mistral:

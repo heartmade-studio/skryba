@@ -13,10 +13,19 @@ enum Retry {
         min(max(count, 1), maximumAttempts)
     }
 
-    /// Groq usually answers a short take in under a second. 12 seconds covers a slow network with room
-    /// for a retry; a long take gets more, since its upload is bigger.
-    static func deadline(forClipOf duration: TimeInterval) -> Duration {
-        .seconds(12 + 0.1 * duration)
+    /// Allow more time for Cloudflare and OpenAI file inference than Groq's fast Whisper route.
+    /// Both policies bound the whole operation, including retries and Groq's part repairs.
+    static func deadline(forClipOf duration: TimeInterval, provider: Settings.TranscriptionProvider = .groq) -> Duration {
+        .seconds(provider == .cloudflare || provider == .openai
+                 ? 60 + 0.2 * max(0, duration) : 12 + 0.1 * max(0, duration))
+    }
+
+    static func attemptBudget(within deadline: Duration) -> Duration { deadline / 2 }
+
+    /// URLSession's idle timeout must not cut off an attempt earlier than our shared policy allows.
+    /// Retry.run still enforces the actual remaining time, even if bytes keep arriving.
+    static func requestTimeout(within deadline: Duration) -> TimeInterval {
+        Double(milliseconds(attemptBudget(within: deadline))) / 1000
     }
 
     /// The pause before attempt `attempt + 1`.
@@ -46,7 +55,7 @@ enum Retry {
             onAttempt(attempt)
             let attemptStarted = clock.now
             do {
-                return try await run(operation, until: min(end, clock.now + deadline / 2))
+                return try await run(operation, until: min(end, clock.now + attemptBudget(within: deadline)))
             } catch {
                 onAttemptFailure(attempt, clock.now - attemptStarted, error)
                 // Another attempt only if it could still get a fair share of the time.
@@ -64,8 +73,21 @@ enum Retry {
         if error is TimedOut { return "app_deadline" }
         if isCancellation(error) { return "cancelled" }
         if let error = error as? URLError { return "url_error_\(error.code.rawValue)" }
+        if error is GroqClient.Transcription.JoinFailure { return "transcript_unaligned_overlap" }
         // Status 0: the client gave up before any HTTP status (no reply, an invalid account ID).
         if case SkrybaError.api(_, let status, _) = error { return status == 0 ? "no_http_status" : "http_status_\(status)" }
+        if case SkrybaError.incompleteReply(let reason) = error {
+            // Only fixed, app-owned reasons may reach the log. Chat finish reasons come from a
+            // provider and must never be echoed verbatim, even in a diagnostic error label.
+            return switch reason {
+            case "missing word timestamps": "transcript_missing_word_timestamps"
+            case "unmatched word timestamps": "transcript_unmatched_word_timestamps"
+            case "incomplete word timestamps": "transcript_incomplete_word_timestamps"
+            case "could not align overlapping words": "transcript_unaligned_overlap"
+            case "length": "reply_length_limit"
+            default: "incomplete_reply"
+            }
+        }
         return "other_error"
     }
 

@@ -47,6 +47,12 @@ struct GroqTranscriptionTests {
         #expect(GroqClient.Transcription.better(first, same) === first)
     }
 
+    @Test func anEmptyRetryCannotReplaceADoubtfulButUsableTranscript() throws {
+        let first = try reply([("Już działa.", -1.2, 1.2, 0)])
+        let empty = try reply([])
+        #expect(GroqClient.Transcription.better(first, empty) === first)
+    }
+
     @Test func summaryHasNumbersButNoWords() throws {
         let transcript = try reply([(" tajne słowa", -1.25, 2.5, 0.1)])
         #expect(transcript.confidenceSummary == "count=1 doubtful=1 lowest_avg_logprob=-1.25 highest_compression_ratio=2.50")
@@ -57,5 +63,66 @@ struct GroqTranscriptionTests {
         let transcript = try GroqClient.Transcription.decode(data)
         #expect(transcript.speechText == "Krótko.")
         #expect(transcript.doubtfulSegments == 0)
+    }
+
+    private func timedReply(_ text: String, _ words: [(String, Double, Double)]) throws -> GroqClient.Transcription {
+        let items = words.map { ["word": $0.0, "start": $0.1, "end": $0.2] as [String: Any] }
+        let json = ["text": text, "words": items, "language": "polish"] as [String: Any]
+        return try GroqClient.Transcription.decode(JSONSerialization.data(withJSONObject: json))
+    }
+
+    @Test(arguments: [(23.9, 1.1), (24.1, 0.9), (0.0, 0.0), (10.0, 8.0)])
+    func joiningUsesWordsRatherThanIndependentOrZeroDurationClocks(_ times: (Double, Double)) throws {
+        let left = try timedReply("To już działa, żółć!", [
+            ("To", 0, 0), ("już", times.0, times.0), ("działa", times.0, times.0), ("żółć", times.0, times.0),
+        ])
+        let right = try timedReply("już działa, żółć! Dalej.", [
+            ("już", times.1, times.1), ("działa", times.1, times.1), ("żółć", times.1, times.1), ("Dalej", times.1, times.1),
+        ])
+        #expect(try GroqClient.Transcription.join([(left, 0, 20), (right, 3, 23)]) == "To już działa, żółć! Dalej.")
+    }
+
+    @Test func joiningDoesNotNeedWordTimestampMetadata() throws {
+        let left = try reply([("To już działa, żółć!", -0.2, 1, 0)])
+        let right = try reply([("już działa, żółć! Dalej.", -0.2, 1, 0)])
+        #expect(try GroqClient.Transcription.join([(left, 0, 20), (right, 3, 23)]) == "To już działa, żółć! Dalej.")
+    }
+
+    @Test func anUncertainJoinStillDoesNotReturnFragments() throws {
+        let left = try reply([("To ju", -0.2, 1, 0)])
+        let right = try reply([("już działa.", -0.2, 1, 0)])
+        #expect(throws: GroqClient.Transcription.JoinFailure.self) {
+            try GroqClient.Transcription.join([(left, 0, 20), (right, 3, 23)])
+        }
+    }
+
+    @Test func confirmedPauseKeepsBothUtterancesWithoutRequiringACommonWord() throws {
+        let left = try reply([("To już działa.", -0.2, 1, 0)])
+        let right = try reply([("Żółć pozostaje.", -0.2, 1, 0)])
+        #expect(try GroqClient.Transcription.join([(left, 0, 19.925), (right, 0, 19.623)])
+                == "To już działa. Żółć pozostaje.")
+    }
+
+    @Test func joiningStillFiltersHallucinatedSilence() throws {
+        let left = try reply([("To już działa, żółć!", -0.2, 1, 0), (" Dziękuję za uwagę.", -1.4, 1, 0.9)])
+        let right = try reply([("już działa, żółć! Dalej.", -0.2, 1, 0)])
+        #expect(try GroqClient.Transcription.join([(left, 0, 20), (right, 3, 23)])
+                == "To już działa, żółć! Dalej.")
+    }
+
+    @Test func anEmptyMiddlePartDoesNotDeduplicateUtterancesAcrossALongPause() throws {
+        let speech = try reply([("To już działa.", -0.2, 1, 0)])
+        let silence = try reply([])
+        #expect(try GroqClient.Transcription.join([(speech, 0, 20), (silence, 3, 23), (speech, 3, 23)])
+                == "To już działa. To już działa.")
+    }
+
+    @Test func repairSelectionUsesMeasuredSpeechRatherThanLongPauses() throws {
+        let sparse = try reply([("Krótki wynik.", -0.09, 1, 0)])
+        let closing = try reply([("Już kończę nagranie.", -0.22, 1, 0)])
+        // The sparse result covers 12 seconds of speech; the closing only one second of speech.
+        #expect(GroqClient.Transcription.partToRepair(at: 1, transcripts: [sparse, closing], voiced: [12, 1], repaired: []) == 0)
+        #expect(GroqClient.Transcription.partToRepair(at: 1, transcripts: [sparse, closing], voiced: [12, 1], repaired: [0]) == 1)
+        #expect(GroqClient.Transcription.partToRepair(at: 1, transcripts: [sparse, closing], voiced: [12, 1], repaired: [0, 1]) == nil)
     }
 }

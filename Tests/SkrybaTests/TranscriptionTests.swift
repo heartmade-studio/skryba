@@ -2,13 +2,13 @@ import Testing
 @testable import Skryba
 
 struct TranscriptionTests {
-    @Test(arguments: [TextCleanup.Model.gptOss, .cloudflareGptOss])
+    @Test(arguments: [TextCleanup.Model.gptOss, .cloudflareGptOss, .luna])
     func localFallbackSkipsTheConfiguredCloudCleanup(_ model: TextCleanup.Model) {
         let result = Transcription(text: "local transcript", source: .localFallback)
         #expect(result.cleanupModel(using: model, skipLocalFallback: true) == nil)
     }
 
-    @Test(arguments: [TextCleanup.Model.gptOss, .cloudflareGptOss])
+    @Test(arguments: [TextCleanup.Model.gptOss, .cloudflareGptOss, .luna])
     func cleanupAfterFallbackRequiresExplicitOptIn(_ model: TextCleanup.Model) {
         let result = Transcription(text: "local transcript", source: .localFallback)
         #expect(result.cleanupModel(using: model, skipLocalFallback: false) == model)
@@ -31,5 +31,12 @@ struct TranscriptionTests {
     @Test func changingProvidersDuringATakeDoesNotSendTextToAnotherCloud() {
         let result = Transcription(text: "cloud transcript", source: .cloud(.groq))
         #expect(result.cleanupModel(using: .cloudflareGptOss, skipLocalFallback: false) == nil)
+        #expect(result.cleanupModel(using: .luna, skipLocalFallback: false) == nil)
+    }
+
+    @Test(arguments: TextCleanup.Model.allCases)
+    func openAIDictationsUseOnlyTheirOwnCleanup(_ model: TextCleanup.Model) {
+        let result = Transcription(text: "cloud transcript", source: .cloud(.openai))
+        #expect(result.cleanupModel(using: model, skipLocalFallback: false) == (model.provider == .openai ? model : nil))
     }
 }

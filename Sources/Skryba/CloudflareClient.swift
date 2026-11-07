@@ -9,6 +9,7 @@ struct CloudflareClient: ChatClient {
 
     let accountID: String
     let apiToken: String
+    var transport: URLSession = Self.session
 
     /// Ephemeral: no cookies, cache or credentials are written to disk.
     private static let session = URLSession(configuration: .ephemeral)
@@ -19,7 +20,7 @@ struct CloudflareClient: ChatClient {
         id.wholeMatch(of: /[0-9a-fA-F]{32}/) != nil
     }
 
-    func transcribe(fileURL: URL, language: String, prompt: String) async throws -> String {
+    func transcribe(fileURL: URL, language: String, prompt: String, requestTimeout: TimeInterval = 30) async throws -> String {
         let body = Request(
             audio: try Data(contentsOf: fileURL).base64EncodedString(),
             language: language.isEmpty ? nil : language,
@@ -27,7 +28,7 @@ struct CloudflareClient: ChatClient {
         )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
-        let data = try await post(path: "ai/run/\(Self.model)", body: try encoder.encode(body), timeout: 30, label: "transcription")
+        let data = try await post(path: "ai/run/\(Self.model)", body: try encoder.encode(body), timeout: requestTimeout, label: "transcription")
         return try Self.text(from: data)
     }
 
@@ -52,7 +53,7 @@ struct CloudflareClient: ChatClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let started = ContinuousClock.now
-        let (data, response) = try await Self.session.upload(for: request, from: body)
+        let (data, response) = try await transport.upload(for: request, from: body)
         Self.log.notice("cloudflare \(label, privacy: .public): \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {

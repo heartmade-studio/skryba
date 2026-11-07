@@ -11,6 +11,7 @@ struct GroqClient: ChatClient {
     static let model = "whisper-large-v3"
 
     let apiKey: String
+    var transport: URLSession = Self.session
 
     /// Ephemeral: no cookies, cache or credentials are written to disk.
     private static let session = URLSession(configuration: .ephemeral)
@@ -19,28 +20,83 @@ struct GroqClient: ChatClient {
     /// Whisper's own fallback temperature for a doubtful result (it steps 0.2, 0.4, … up to 1.0).
     /// A little randomness gets the decoder out of the rut it fell into at temperature 0.
     static let retryTemperature = 0.2
+    static let maximumPartRepairs = 2
 
-    /// Transcribes at temperature 0. If a segment looks garbled (see `Segment.isDoubtful`), sends the
-    /// whole recording once more with a little randomness and keeps the better of the two.
-    /// Groq doesn't do this fallback itself, unlike the open-source Whisper.
-    func transcribe(fileURL: URL, language: String, prompt: String) async throws -> String {
-        let first = try await transcription(of: fileURL, language: language, prompt: prompt, temperature: 0)
-        Self.log.info("groq segments: \(first.confidenceSummary, privacy: .public)")
-        guard first.doubtfulSegments > 0 else { return first.speechText }
+    /// Long takes use independent windows, so a bad decode after a pause can't carry through the
+    /// rest of the recording. All parts still share the caller's cancellable retry deadline.
+    func transcribe(fileURL: URL, language: String, prompt: String, dictationID: String = UUID().uuidString) async throws -> String {
+        let chunks = try AudioChunks.prepare(fileURL)
+        defer { chunks.remove() }
+        let chunked = chunks.parts.count > 1
+        var replies: [(transcript: Transcription, from: Double, until: Double)] = []
+        var detectedLanguage = language
+        let run = dictationID
+        let pauseJoins = chunks.parts.dropFirst().count { $0.from == 0 }
+        Self.log.notice("groq audio parts: count=\(chunks.parts.count) pause_joins=\(pauseJoins) run=\(run, privacy: .public)")
+        for (index, part) in chunks.parts.enumerated() {
+            try Task.checkCancellation()
+            let transcript = try await transcribePart(
+                part.url, language: detectedLanguage, prompt: prompt
+            )
+            // Auto-detect once, rather than letting an English name or a pause change the next
+            // part's language. An unrecognised provider value simply leaves auto-detection on.
+            if detectedLanguage.isEmpty { detectedLanguage = transcript.languageCode ?? "" }
+            Self.log.notice(
+                "groq audio part decoded: run=\(run, privacy: .public) part=\(index + 1) characters=\(transcript.speechText.count) segments=\(transcript.segments?.count ?? 0) from_ms=\(Retry.milliseconds(.seconds(part.from))) until_ms=\(Retry.milliseconds(.seconds(part.until))) voiced_ms=\(Retry.milliseconds(.seconds(part.voicedDuration)))"
+            )
+            replies.append((transcript, part.from, part.until))
+        }
+        if !chunked { return replies[0].transcript.speechText }
+        var repaired: Set<Int> = []
+        while true {
+            try Task.checkCancellation()
+            do {
+                let text = try Transcription.join(replies) { boundary, summary in
+                    Self.log.notice("groq seam analysis: run=\(run, privacy: .public) boundary=\(boundary) \(summary, privacy: .public)")
+                }
+                Self.log.notice("groq audio joined: run=\(run, privacy: .public) parts=\(replies.count) pause_joins=\(pauseJoins) method=text_overlap part_repairs=\(repaired.count)")
+                return text
+            } catch let failure as Transcription.JoinFailure {
+                guard repaired.count < Self.maximumPartRepairs,
+                      let index = Transcription.partToRepair(at: failure.boundary, transcripts: replies.map(\.transcript),
+                                                           voiced: chunks.parts.map(\.voicedDuration), repaired: repaired) else {
+                    Self.log.notice("groq part repair exhausted: run=\(run, privacy: .public) boundary=\(failure.boundary)")
+                    throw failure // AppController keeps the original for a manual retry.
+                }
+                repaired.insert(index)
+                let part = chunks.parts[index]
+                Self.log.notice("groq part repair started: run=\(run, privacy: .public) boundary=\(failure.boundary) part=\(index + 1) before_characters=\(replies[index].transcript.speechText.count)")
+                // A failed overlap can mean one decode omitted speech. Retry only that part at
+                // Whisper's fallback temperature; never upload the whole original on this path.
+                let candidate = try await transcription(of: part.url, language: detectedLanguage, prompt: prompt,
+                                                        temperature: Self.retryTemperature)
+                try Task.checkCancellation()
+                if !candidate.speechText.isEmpty { replies[index].transcript = candidate }
+                Self.log.notice("groq part repair completed: run=\(run, privacy: .public) part=\(index + 1) candidate_characters=\(candidate.speechText.count)")
+            }
+        }
+    }
+
+    /// Groq doesn't do Whisper's temperature fallback itself. Retry a doubtful part once and keep
+    /// the better result; never discard a usable first reply just because the second request failed.
+    private func transcribePart(_ file: URL, language: String, prompt: String) async throws -> Transcription {
+        let first = try await transcription(of: file, language: language, prompt: prompt, temperature: 0)
+        Self.log.notice("groq segments: \(first.confidenceSummary, privacy: .public)")
+        guard first.doubtfulSegments > 0 else { return first }
 
         let second: Transcription
         do {
-            second = try await transcription(of: fileURL, language: language, prompt: prompt, temperature: Self.retryTemperature)
+            second = try await transcription(of: file, language: language, prompt: prompt, temperature: Self.retryTemperature)
         } catch where !Retry.isCancellation(error) {
             // The first transcript is still usable; a failed second opinion must not lose it.
             Self.log.notice("groq confidence retry failed: \(Retry.failureKind(for: error), privacy: .public)")
-            return first.speechText
+            return first
         }
         let kept = Transcription.better(first, second)
-        Self.log.info(
+        Self.log.notice(
             "groq confidence retry: \(second.confidenceSummary, privacy: .public) kept=\(kept === second ? "retry" : "first", privacy: .public)"
         )
-        return kept.speechText
+        return kept
     }
 
     private func transcription(of fileURL: URL, language: String, prompt: String, temperature: Double) async throws -> Transcription {
@@ -58,8 +114,9 @@ struct GroqClient: ChatClient {
         if !language.isEmpty { field("language", language) }
         if !prompt.isEmpty { field("prompt", prompt) }
 
-        body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.m4a\"\r\n")
-        body.append("Content-Type: audio/mp4\r\n\r\n")
+        let wav = fileURL.pathExtension == "wav"
+        body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.\(wav ? "wav" : "m4a")\"\r\n")
+        body.append("Content-Type: \(wav ? "audio/wav" : "audio/mp4")\r\n\r\n")
         body.append(try Data(contentsOf: fileURL))
         body.append("\r\n--\(boundary)--\r\n")
 
@@ -96,7 +153,7 @@ struct GroqClient: ChatClient {
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
 
         let started = ContinuousClock.now
-        let (data, response) = try await Self.session.upload(for: request, from: body)
+        let (data, response) = try await transport.upload(for: request, from: body)
         Self.log.notice("groq \(label, privacy: .public): \(body.count / 1024) KB, \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         guard let http = response as? HTTPURLResponse else {
             throw SkrybaError.api(provider: "Groq", status: 0, message: "No response.")
@@ -113,6 +170,16 @@ struct GroqClient: ChatClient {
     final class Transcription: Decodable, Sendable {
         let text: String
         let segments: [Segment]?
+        let language: String?
+
+        var languageCode: String? {
+            guard let language else { return nil }
+            let english = Locale(identifier: "en")
+            return Locale.LanguageCode.isoLanguageCodes.first { code in
+                code.identifier.count == 2 && (code.identifier == language.lowercased()
+                    || english.localizedString(forLanguageCode: code.identifier)?.lowercased() == language.lowercased())
+            }?.identifier
+        }
 
         static func decode(_ data: Data) throws -> Transcription {
             let decoder = JSONDecoder()
@@ -125,6 +192,8 @@ struct GroqClient: ChatClient {
             let noSpeechProb: Double?
             let avgLogprob: Double?
             let compressionRatio: Double?
+            let start: Double?
+            let end: Double?
 
             /// Whisper's own silence rule: likely no speech *and* low confidence. See also `Hallucinations`.
             var isLikelySilence: Bool {
@@ -148,6 +217,58 @@ struct GroqClient: ChatClient {
             return speech.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
+        /// Audio overlap is matched as text, not as a pair of clocks. The same utterance can have
+        /// very different word timestamps in two independent decodes, including zero-duration words.
+        static func join(_ parts: [(transcript: Transcription, from: Double, until: Double)],
+                         onBoundary: ((Int, String) -> Void)? = nil) throws -> String {
+            guard let first = parts.first else { return "" }
+            var result = first.transcript.speechText
+            var previousHadSpeech = !result.isEmpty
+            for (offset, part) in parts.dropFirst().enumerated() {
+                let next = part.transcript.speechText
+                if next.isEmpty {
+                    onBoundary?(offset + 1, "reason=empty_part")
+                    previousHadSpeech = false
+                    continue
+                }
+                if part.from == 0 || !previousHadSpeech {
+                    onBoundary?(offset + 1, "reason=consecutive_audio")
+                    result = [result, next].filter { !$0.isEmpty }.joined(separator: " ")
+                } else {
+                    let analysis = TranscriptJoiner.analyze(result, next)
+                    onBoundary?(offset + 1, analysis.summary)
+                    guard let joined = analysis.text else {
+                        throw JoinFailure(boundary: offset + 1)
+                    }
+                    result = joined
+                }
+                previousHadSpeech = true
+            }
+            return result
+        }
+
+        struct JoinFailure: LocalizedError {
+            /// Index of the right-hand part, also the one-based boundary number.
+            let boundary: Int
+            var errorDescription: String? { "Could not align transcription parts \(boundary) and \(boundary + 1)." }
+        }
+
+        /// Prefer a suspiciously short decode relative to measured speech, not relative to file
+        /// length: a long pause followed by a short closing sentence is legitimately sparse.
+        static func partToRepair(at boundary: Int, transcripts: [Transcription], voiced: [TimeInterval],
+                                 repaired: Set<Int>) -> Int? {
+            guard boundary > 0, boundary < transcripts.count, voiced.count == transcripts.count else { return nil }
+            return [boundary - 1, boundary].filter { !repaired.contains($0) }.min { a, b in
+                let densityA = voiced[a] >= 0.3 ? Double(transcripts[a].speechText.count) / voiced[a] : .infinity
+                let densityB = voiced[b] >= 0.3 ? Double(transcripts[b].speechText.count) / voiced[b] : .infinity
+                if densityA != densityB { return densityA < densityB }
+                if transcripts[a].lowestLogprob != transcripts[b].lowestLogprob {
+                    return transcripts[a].lowestLogprob < transcripts[b].lowestLogprob
+                }
+                return a < b
+            }
+        }
+
         var doubtfulSegments: Int { speech.count { $0.isDoubtful } }
 
         /// The least confident segment's score; 0 when there is nothing to judge.
@@ -156,6 +277,7 @@ struct GroqClient: ChatClient {
         /// Fewer doubtful segments wins; on a tie, the higher worst-segment confidence. The first one
         /// (temperature 0) wins a full tie.
         static func better(_ first: Transcription, _ second: Transcription) -> Transcription {
+            if second.speechText.isEmpty, !first.speechText.isEmpty { return first }
             if second.doubtfulSegments != first.doubtfulSegments {
                 return second.doubtfulSegments < first.doubtfulSegments ? second : first
             }

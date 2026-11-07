@@ -97,6 +97,7 @@ final class AppController {
     func start() {
         AudioRecorder.removeLeftovers()
         pendingRecordings.load()
+        DiagnosticRecording.removeExpired()
         deleteExpiredRecordingsHourly()
         network.onReconnect = { [weak self] in self?.announcePendingRecordings() }
         network.start()
@@ -422,6 +423,18 @@ final class AppController {
         defer {
             Self.log.notice("dictation finished id=\(id, privacy: .public) outcome=\(outcome, privacy: .public) elapsed_ms=\(Retry.milliseconds(ContinuousClock.now - started), privacy: .public)")
         }
+        do {
+            if try DiagnosticRecording.captureIfRequested(audio.url, duration: audio.duration) != nil {
+                Self.log.notice("diagnostic recording preserved id=\(id, privacy: .public)")
+            }
+        } catch {
+            // This explicitly requested copy is a prerequisite to the controlled test. Don't send
+            // audio if it failed: successful delivery would otherwise delete the only original.
+            outcome = "diagnostic_copy_failed"
+            job = nil
+            fail(message(for: .failed("Could not preserve the diagnostic recording. Nothing was sent."), saved: audio.saved != nil))
+            return
+        }
         let vocabulary = Vocabulary(settings.vocabulary)
         let result = await transcript(of: audio, vocabulary: vocabulary, id: id)
         job = nil
@@ -511,8 +524,10 @@ final class AppController {
             stop = .failed(settings.setupHint)
         } else if network.isOnline {
             do {
+                let budget = Retry.deadline(forClipOf: audio.duration, provider: provider)
+                Self.log.notice("cloud transcription budget id=\(id, privacy: .public) provider=\(provider.rawValue, privacy: .public) total_ms=\(Retry.milliseconds(budget)) attempt_ms=\(Retry.milliseconds(Retry.attemptBudget(within: budget)))")
                 let text = try await Retry.attempts(
-                    within: Retry.deadline(forClipOf: audio.duration),
+                    within: budget,
                     attemptLimit: attempts,
                     onAttempt: { attempt in
                         hud.show(.transcribing(attempt: attempt, total: attempts))
@@ -525,7 +540,8 @@ final class AppController {
                             "cloud transcription request failed id=\(id, privacy: .public) provider=\(provider.rawValue, privacy: .public) attempt=\(attempt, privacy: .public) elapsed_ms=\(Retry.milliseconds(elapsed), privacy: .public) reason=\(Retry.failureKind(for: error), privacy: .public)"
                         )
                     },
-                    operation: cloudTranscription(of: audio.url, with: provider, vocabulary: vocabulary)
+                    operation: cloudTranscription(of: audio.url, with: provider, vocabulary: vocabulary,
+                                                  id: id, requestTimeout: Retry.requestTimeout(within: budget))
                 )
                 return .success(Transcription(text: text, source: .cloud(provider)))
             } catch where Retry.isCancellation(error) {
@@ -564,16 +580,20 @@ final class AppController {
     /// One request to a cloud provider, with everything it needs captured up front, so it can run
     /// (and be retried or cancelled) away from the main actor.
     private func cloudTranscription(
-        of file: URL, with provider: Settings.TranscriptionProvider, vocabulary: Vocabulary
+        of file: URL, with provider: Settings.TranscriptionProvider, vocabulary: Vocabulary,
+        id: String = UUID().uuidString, requestTimeout: TimeInterval = 30
     ) -> @Sendable () async throws -> String {
         let language = settings.language
         let prompt = vocabulary.prompt
         let groq = GroqClient(apiKey: settings.apiKey)
         let cloudflare = settings.cloudflare
+        let openai = OpenAIClient(apiKey: settings.openAIKey)
+        let keywords = vocabulary.terms
         return {
             switch provider {
-            case .groq: try await groq.transcribe(fileURL: file, language: language, prompt: prompt)
-            case .cloudflare: try await cloudflare.transcribe(fileURL: file, language: language, prompt: prompt)
+            case .groq: try await groq.transcribe(fileURL: file, language: language, prompt: prompt, dictationID: id)
+            case .cloudflare: try await cloudflare.transcribe(fileURL: file, language: language, prompt: prompt, requestTimeout: requestTimeout)
+            case .openai: try await openai.transcribe(fileURL: file, language: language, keywords: keywords, requestTimeout: requestTimeout)
             case .local: preconditionFailure("local Whisper is not a cloud provider")
             }
         }
@@ -593,6 +613,7 @@ final class AppController {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60 * 60))
                 self?.pendingRecordings.deleteExpired()
+                DiagnosticRecording.removeExpired()
             }
         }
     }
@@ -618,14 +639,16 @@ final class AppController {
         let started = ContinuousClock.now
         let attempts = settings.cloudAttempts
         do {
+            let budget = Retry.deadline(forClipOf: clip.duration, provider: provider)
             let text = provider == .local
                 ? try await settings.localWhisper.transcribe(
                     fileURL: clip.url, duration: clip.duration, language: settings.language, prompt: vocabulary.prompt
                 )
                 : try await Retry.attempts(
-                    within: Retry.deadline(forClipOf: clip.duration),
+                    within: budget,
                     attemptLimit: attempts,
-                    operation: cloudTranscription(of: clip.url, with: provider, vocabulary: vocabulary)
+                    operation: cloudTranscription(of: clip.url, with: provider, vocabulary: vocabulary,
+                                                  requestTimeout: Retry.requestTimeout(within: budget))
                 )
             let seconds = (ContinuousClock.now - started).formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1)))
             return text.isEmpty ? "Heard nothing (\(seconds)). Speak while it listens." : "“\(text)” · \(seconds)"
@@ -654,8 +677,13 @@ final class AppController {
     private func cleanUp(_ text: String, model: TextCleanup.Model, vocabulary: Vocabulary, id: String) async -> (text: String, warning: String?) {
         // One snapshot of the rules, so a change in Settings during the request can't mix them.
         let replacements = Replacements(settings.replacements)
-        // Every cleanup model runs at Groq or Cloudflare.
-        let client: any ChatClient = model.provider == .groq ? GroqClient(apiKey: settings.apiKey) : settings.cloudflare
+        let client: any ChatClient
+        switch model.provider {
+        case .groq: client = GroqClient(apiKey: settings.apiKey)
+        case .cloudflare: client = settings.cloudflare
+        case .openai: client = OpenAIClient(apiKey: settings.openAIKey)
+        case .local: preconditionFailure("local Whisper has no cloud cleanup")
+        }
         let cleanup = TextCleanup(client: client, model: model)
         let started = ContinuousClock.now
         var outcome = "completed"

@@ -33,6 +33,16 @@ struct RetryTests {
         #expect(Retry.deadline(forClipOf: 300) == .seconds(42))
     }
 
+    @Test func cloudflareGetsALargerSharedDeadlineAndMatchingRequestTimeout() {
+        #expect(Retry.deadline(forClipOf: 0, provider: .cloudflare) == .seconds(60))
+        #expect(Retry.deadline(forClipOf: 73.624, provider: .cloudflare) == .seconds(74.7248))
+        #expect(Retry.deadline(forClipOf: 300, provider: .cloudflare) == .seconds(120))
+        let budget = Retry.deadline(forClipOf: 300, provider: .cloudflare)
+        #expect(Retry.attemptBudget(within: budget) == .seconds(60))
+        #expect(Retry.requestTimeout(within: budget) == 60)
+        #expect(Retry.deadline(forClipOf: 300, provider: .groq) == .seconds(42))
+    }
+
     @Test func attemptCountsStayBetweenOneAndThree() {
         #expect(Retry.clampedAttempts(0) == 1)
         #expect(Retry.clampedAttempts(-1) == 1)
@@ -48,7 +58,22 @@ struct RetryTests {
         #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 503, message: "private response")) == "http_status_503")
         #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 0, message: "No response.")) == "no_http_status")
         #expect(Retry.failureKind(for: CancellationError()) == "cancelled")
+        #expect(Retry.failureKind(for: GroqClient.Transcription.JoinFailure(boundary: 2)) == "transcript_unaligned_overlap")
         #expect(Retry.milliseconds(.milliseconds(1234) + .microseconds(500)) == 1234)
+    }
+
+    @Test func transcriptFailureDiagnosticsDoNotExposeArbitraryErrorText() {
+        let reasons = [
+            "missing word timestamps": "transcript_missing_word_timestamps",
+            "unmatched word timestamps": "transcript_unmatched_word_timestamps",
+            "incomplete word timestamps": "transcript_incomplete_word_timestamps",
+            "could not align overlapping words": "transcript_unaligned_overlap",
+            "length": "reply_length_limit",
+            "private provider text": "incomplete_reply",
+        ]
+        for (reason, label) in reasons {
+            #expect(Retry.failureKind(for: SkrybaError.incompleteReply(reason: reason)) == label)
+        }
     }
 }
 
