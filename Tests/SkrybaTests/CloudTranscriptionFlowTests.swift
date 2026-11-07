@@ -16,16 +16,74 @@ struct CloudTranscriptionFlowTests {
         return URLSession(configuration: configuration)
     }
 
-    private func recording(seconds: Int = 40) throws -> URL {
+    private func recording(seconds: Int = 40, silentSeconds: Int = 0) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).wav")
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000))
         buffer.frameLength = buffer.frameCapacity
         let samples = try #require(buffer.floatChannelData?[0])
-        for index in 0..<16_000 { samples[index] = Float(sin(Double(index) * 0.1)) * 0.2 }
-        for _ in 0..<seconds { try file.write(from: buffer) }
+        for second in 0..<seconds {
+            for index in 0..<16_000 { samples[index] = second < silentSeconds ? 0 : Float(sin(Double(index) * 0.1)) * 0.2 }
+            try file.write(from: buffer)
+        }
         return url
+    }
+
+    @Test @MainActor func aRetryAfterATimeoutResumesAtThePartWithoutAReply() async throws {
+        let source = try recording()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let a = #"{"text":"To już działa."}"#
+        let b = #"{"text":"już działa."}"#
+        let transport = session([.reply(a), .hang, .reply(b)])
+        defer { transport.invalidateAndCancel() }
+        let client = GroqClient(apiKey: "test", transport: transport)
+        let take = GroqClient.Take(fileURL: source)
+        var attempts: [Int] = []
+        let text = try await Retry.attempts(within: .seconds(4), attemptLimit: 2, onAttempt: { attempts.append($0) }) {
+            try await client.transcribe(take, language: "pl", prompt: "")
+        }
+        #expect(text == "To już działa.")
+        #expect(attempts == [1, 2])
+        let bodies = ScriptedCloudProtocol.state.bodies
+        #expect(bodies.count == 3)
+        // The second attempt sent only part 2 again, not part 1.
+        #expect(try uploadedWAV(bodies[2]) == uploadedWAV(bodies[1]))
+        #expect(try uploadedWAV(bodies[2]) != uploadedWAV(bodies[0]))
+    }
+
+    @Test func anEmptyPartWithSpeechIsRepairedRatherThanPastedAsAGap() async throws {
+        let source = try recording()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let transport = session([.reply(#"{"text":"To już działa."}"#), .reply(#"{"text":""}"#),
+                                 .reply(#"{"text":"już działa. Dalej."}"#)])
+        defer { transport.invalidateAndCancel() }
+        let text = try await GroqClient(apiKey: "test", transport: transport)
+            .transcribe(fileURL: source, language: "pl", prompt: "")
+        #expect(text == "To już działa. Dalej.")
+        let bodies = ScriptedCloudProtocol.state.bodies
+        #expect(bodies.count == 3)
+        #expect(try uploadedWAV(bodies[2]) == uploadedWAV(bodies[1]))
+    }
+
+    @Test func aSilentOpeningDoesNotPinTheDetectedLanguage() async throws {
+        let source = try recording(seconds: 60, silentSeconds: 22)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let transport = session([
+            .reply(#"{"text":"","language":"english"}"#),
+            .reply(#"{"text":"Dzień dobry wszystkim państwu.","language":"polish"}"#),
+            .reply(#"{"text":"wszystkim państwu. Zaczynamy.","language":"polish"}"#),
+        ])
+        defer { transport.invalidateAndCancel() }
+        let text = try await GroqClient(apiKey: "test", transport: transport)
+            .transcribe(fileURL: source, language: "", prompt: "")
+        #expect(text == "Dzień dobry wszystkim państwu. Zaczynamy.")
+        let bodies = ScriptedCloudProtocol.state.bodies
+        #expect(bodies.count == 3)
+        let language = Data("name=\"language\"".utf8)
+        #expect(bodies[0].range(of: language) == nil)
+        #expect(bodies[1].range(of: language) == nil)
+        #expect(bodies[2].range(of: Data("name=\"language\"\r\n\r\npl\r\n".utf8)) != nil)
     }
 
     private func uploadedWAV(_ body: Data) throws -> Data {

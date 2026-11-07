@@ -16,28 +16,17 @@ struct OpenAIClient: ChatClient {
 
     /// The caller owns retries and the shared deadline. Cancellation propagates to the upload.
     func transcribe(fileURL: URL, language: String, keywords: [String], requestTimeout: TimeInterval = 30) async throws -> String {
-        let boundary = "Skryba-\(UUID().uuidString)"
-        var body = Data()
-        func append(_ string: String) { body.append(Data(string.utf8)) }
-        func field(_ name: String, _ value: String) {
-            append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
-        }
-        field("model", Self.model)
-        field("response_format", "json")
-        if !language.isEmpty { field("languages[]", language) }
+        var form = Multipart()
+        form.field("model", Self.model)
+        form.field("response_format", "json")
+        if !language.isEmpty { form.field("languages[]", language) }
         // OpenAI rejects the whole request for a keyword containing these characters. Ignore that
         // hint rather than lose a dictation; Vocabulary still applies its local spelling fixes.
         for keyword in keywords where !keyword.isEmpty && keyword.rangeOfCharacter(from: CharacterSet(charactersIn: "<>\r\n")) == nil {
-            field("keywords[]", keyword)
+            form.field("keywords[]", keyword)
         }
-        let wav = fileURL.pathExtension.lowercased() == "wav"
-        append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.\(wav ? "wav" : "m4a")\"\r\n")
-        append("Content-Type: \(wav ? "audio/wav" : "audio/mp4")\r\n\r\n")
-        body.append(try Data(contentsOf: fileURL))
-        append("\r\n--\(boundary)--\r\n")
-
-        let data = try await send(to: Self.endpoint, body: body,
-                                  contentType: "multipart/form-data; boundary=\(boundary)",
+        let data = try await send(to: Self.endpoint, body: try form.finish(withAudio: fileURL),
+                                  contentType: form.contentType,
                                   timeout: requestTimeout, label: "transcription")
         return try JSONDecoder().decode(Reply.self, from: data).text.trimmingCharacters(in: .whitespacesAndNewlines)
     }

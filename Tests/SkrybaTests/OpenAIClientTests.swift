@@ -54,6 +54,18 @@ struct OpenAIClientTests {
         #expect(form.contains("filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n"))
     }
 
+    @Test func uploadsNameTheAudioTypeWhateverTheExtensionCase() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).WAV")
+        try Data([1, 2, 3]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var form = Multipart()
+        form.field("model", "test")
+        let body = String(decoding: try form.finish(withAudio: file), as: UTF8.self)
+        #expect(body.contains("filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n"))
+        #expect(body.hasSuffix("\r\n--\(form.boundary)--\r\n"))
+        #expect(form.contentType == "multipart/form-data; boundary=\(form.boundary)")
+    }
+
     @Test func emptySpeechSucceedsButAMissingTranscriptFails() async throws {
         #expect(try await transcribe(reply: #"{"text":""}"#) == "")
         for reply in [#"{"languages":[]}"#, #"{"text":null}"#, "not JSON"] {

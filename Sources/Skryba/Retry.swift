@@ -15,9 +15,13 @@ enum Retry {
 
     /// Allow more time for Cloudflare and OpenAI file inference than Groq's fast Whisper route.
     /// Both policies bound the whole operation, including retries and Groq's part repairs.
+    /// A long Groq take is sent as sequential PCM parts (about 0.8 MB each, several times the AAC
+    /// original), so each part after the first adds 5 seconds: one upload at about 2 Mbit/s plus
+    /// Groq's reply. That is an estimate, not a measurement.
     static func deadline(forClipOf duration: TimeInterval, provider: Settings.TranscriptionProvider = .groq) -> Duration {
-        .seconds(provider == .cloudflare || provider == .openai
-                 ? 60 + 0.2 * max(0, duration) : 12 + 0.1 * max(0, duration))
+        let duration = max(0, duration)
+        if provider == .cloudflare || provider == .openai { return .seconds(60 + 0.2 * duration) }
+        return .seconds(12 + 0.1 * duration + 5 * Double(AudioChunks.partCount(forDuration: duration) - 1))
     }
 
     static func attemptBudget(within deadline: Duration) -> Duration { deadline / 2 }
@@ -79,14 +83,7 @@ enum Retry {
         if case SkrybaError.incompleteReply(let reason) = error {
             // Only fixed, app-owned reasons may reach the log. Chat finish reasons come from a
             // provider and must never be echoed verbatim, even in a diagnostic error label.
-            return switch reason {
-            case "missing word timestamps": "transcript_missing_word_timestamps"
-            case "unmatched word timestamps": "transcript_unmatched_word_timestamps"
-            case "incomplete word timestamps": "transcript_incomplete_word_timestamps"
-            case "could not align overlapping words": "transcript_unaligned_overlap"
-            case "length": "reply_length_limit"
-            default: "incomplete_reply"
-            }
+            return reason == "length" ? "reply_length_limit" : "incomplete_reply"
         }
         return "other_error"
     }

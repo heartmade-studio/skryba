@@ -432,6 +432,7 @@ final class AppController {
             // audio if it failed: successful delivery would otherwise delete the only original.
             outcome = "diagnostic_copy_failed"
             job = nil
+            if audio.saved == nil { AudioRecorder.remove(audio.url) }
             fail(message(for: .failed("Could not preserve the diagnostic recording. Nothing was sent."), saved: audio.saved != nil))
             return
         }
@@ -589,9 +590,12 @@ final class AppController {
         let cloudflare = settings.cloudflare
         let openai = OpenAIClient(apiKey: settings.openAIKey)
         let keywords = vocabulary.terms
+        // One per call, so every retry attempt resumes Groq's parts instead of re-sending them.
+        // Creating it costs nothing until Groq uses it; its part files go with the closure.
+        let groqTake = GroqClient.Take(fileURL: file)
         return {
             switch provider {
-            case .groq: try await groq.transcribe(fileURL: file, language: language, prompt: prompt, dictationID: id)
+            case .groq: try await groq.transcribe(groqTake, language: language, prompt: prompt, dictationID: id)
             case .cloudflare: try await cloudflare.transcribe(fileURL: file, language: language, prompt: prompt, requestTimeout: requestTimeout)
             case .openai: try await openai.transcribe(fileURL: file, language: language, keywords: keywords, requestTimeout: requestTimeout)
             case .local: preconditionFailure("local Whisper is not a cloud provider")

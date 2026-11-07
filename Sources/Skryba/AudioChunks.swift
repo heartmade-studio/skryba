@@ -24,7 +24,7 @@ struct AudioChunks {
         let format = input.processingFormat
         let rate = format.sampleRate
         let duration = Double(input.length) / rate
-        guard duration > 30 else {
+        guard partCount(forDuration: duration) > 1 else {
             return AudioChunks(parts: [Part(url: source, from: 0, until: duration, voicedDuration: duration)], directory: nil)
         }
 
@@ -97,6 +97,12 @@ struct AudioChunks {
         let upper = center + 4
         guard lower >= 0, upper < levels.count else { return false }
         return levels[lower...upper].allSatisfy { $0.isFinite && $0 >= 0 && $0 < 0.0000031622777 }
+    }
+
+    /// How many uploads `prepare` makes: one up to 30 seconds (one Whisper window), else one per
+    /// started 20 seconds. `Retry.deadline` sizes Groq's budget with it.
+    static func partCount(forDuration duration: TimeInterval) -> Int {
+        duration > 30 ? Int(ceil(duration / 20)) : 1
     }
 
     /// Roughly 20 seconds per part, with cuts moved at most a second toward the quietest 150 ms.

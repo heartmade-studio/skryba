@@ -53,7 +53,8 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 | `FnGesture.swift` | Everything a Fn press means, in one place: hold to talk, a triple tap for hands-free, a tap to stop. A cancelled take resets it, so no half-finished gesture outlives it. |
 | `HotKey.swift` | Alternative custom-shortcut trigger via Carbon `RegisterEventHotKey`, which reports both press and release. |
 | `AudioRecorder.swift` | Records to a private temp folder at 16 kHz mono (the rate Whisper uses internally) and meters the level. Cuts the trailing silence, where Whisper would otherwise invent words. |
-| `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing; one retry at temperature 0.2 when a segment looks garbled. |
+| `GroqClient.swift` | Multipart upload over an ephemeral URL session (nothing cached on disk), then `verbose_json` parsing; one retry at temperature 0.2 when a segment looks garbled. A long take's parts and replies are kept across retry attempts; an empty part with measured speech is repaired, never pasted as a gap. |
+| `Multipart.swift` | The multipart/form-data upload body shared by Groq and OpenAI transcription. |
 | `AudioChunks.swift` | Splits Groq takes longer than 30 seconds into independent windows near pauses. Confirmed silence needs no overlap; other cuts share six seconds of audio. Temporary WAVs are deleted on success, failure or cancellation. |
 | `TranscriptJoiner.swift` | Aligns the shared suffix/prefix of adjacent transcripts, independently of word timestamps, then slices the original text at whole-word boundaries. |
 | `CloudflareClient.swift` | Whisper large-v3-turbo through Cloudflare Workers AI, as an alternative to Groq, plus its chat models for AI cleanup. |
@@ -245,8 +246,9 @@ Skryba never throws a dictation away because the network is gone.
   on this Mac*) while you speak. Recording works as usual.
 - **A bad connection:** Settings → General → **Maximum cloud attempts** selects 1–3 total
   attempts (default 3). **1 — no retries** tries once, then uses local fallback if enabled or
-  keeps the recording. All attempts share one deadline: **Groq** gets 12 s + 10% of the take's length;
-  **Cloudflare and OpenAI** get 60 s + 20%, allowing more time for file inference. A stalled single attempt
+  keeps the recording. All attempts share one deadline: **Groq** gets 12 s + 10% of the take's length,
+  plus 5 s for each extra part of a take longer than 30 s; a retry resumes at the first part
+  without a reply. **Cloudflare and OpenAI** get 60 s + 20%, allowing more time for file inference. A stalled single attempt
   waits at most half that budget (about 6 s on Groq or 30 s on Cloudflare/OpenAI for a short take), so there's
   time for a retry. The HUD shows each attempt with a **Cancel** button; **Cancel transcription** in
   the menu does the same. No network at all, or a rejected key, isn't retried. AI cleanup gets 30

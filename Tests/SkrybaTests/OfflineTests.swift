@@ -30,7 +30,16 @@ struct RetryTests {
 
     @Test func aShortTakeGetsAboutTwelveSeconds() {
         #expect(Retry.deadline(forClipOf: 5) == .seconds(12.5))
-        #expect(Retry.deadline(forClipOf: 300) == .seconds(42))
+        #expect(Retry.deadline(forClipOf: 30) == .seconds(15))
+    }
+
+    @Test func longGroqTakesGetFiveSecondsPerAdditionalPart() {
+        #expect(AudioChunks.partCount(forDuration: 30) == 1)
+        #expect(AudioChunks.partCount(forDuration: 40) == 2)
+        #expect(AudioChunks.partCount(forDuration: 120) == 6)
+        #expect(Retry.deadline(forClipOf: 40) == .seconds(21))
+        #expect(Retry.deadline(forClipOf: 120) == .seconds(49))
+        #expect(Retry.deadline(forClipOf: 300) == .seconds(112))
     }
 
     @Test func cloudflareGetsALargerSharedDeadlineAndMatchingRequestTimeout() {
@@ -40,7 +49,7 @@ struct RetryTests {
         let budget = Retry.deadline(forClipOf: 300, provider: .cloudflare)
         #expect(Retry.attemptBudget(within: budget) == .seconds(60))
         #expect(Retry.requestTimeout(within: budget) == 60)
-        #expect(Retry.deadline(forClipOf: 300, provider: .groq) == .seconds(42))
+        #expect(Retry.deadline(forClipOf: 300, provider: .groq) == .seconds(112))
     }
 
     @Test func attemptCountsStayBetweenOneAndThree() {
@@ -64,10 +73,6 @@ struct RetryTests {
 
     @Test func transcriptFailureDiagnosticsDoNotExposeArbitraryErrorText() {
         let reasons = [
-            "missing word timestamps": "transcript_missing_word_timestamps",
-            "unmatched word timestamps": "transcript_unmatched_word_timestamps",
-            "incomplete word timestamps": "transcript_incomplete_word_timestamps",
-            "could not align overlapping words": "transcript_unaligned_overlap",
             "length": "reply_length_limit",
             "private provider text": "incomplete_reply",
         ]

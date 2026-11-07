@@ -117,6 +117,22 @@ struct GroqTranscriptionTests {
                 == "To już działa. To już działa.")
     }
 
+    @Test func anEmptyPartWithMeasuredSpeechIsADroppedDecodeNotAPause() throws {
+        let speech = try reply([("To już działa.", -0.2, 1, 0)])
+        let silence = try reply([])
+        let parts = [(speech, 0.0, 20.0), (silence, 3.0, 23.0), (speech, 3.0, 23.0)]
+        #expect(throws: GroqClient.Transcription.JoinFailure.self) {
+            try GroqClient.Transcription.join(parts, voiced: [15, 15, 15])
+        }
+        #expect(throws: GroqClient.Transcription.JoinFailure.self) {
+            try GroqClient.Transcription.join([(silence, 0, 20), (speech, 3, 23)], voiced: [15, 15])
+        }
+        // A cough or a keystroke in a pause, or a part already decoded twice, stays a pause.
+        #expect(try GroqClient.Transcription.join(parts, voiced: [15, 1, 15]) == "To już działa. To już działa.")
+        #expect(GroqClient.Transcription.partToRepair(at: 1, transcripts: [speech, silence, speech],
+                                                     voiced: [15, 15, 15], repaired: []) == 1)
+    }
+
     @Test func repairSelectionUsesMeasuredSpeechRatherThanLongPauses() throws {
         let sparse = try reply([("Krótki wynik.", -0.09, 1, 0)])
         let closing = try reply([("Już kończę nagranie.", -0.22, 1, 0)])
