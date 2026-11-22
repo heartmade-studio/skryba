@@ -102,6 +102,8 @@ final class AppController {
     /// broken or hostile, and it is refused rather than cut, so the recording stays for a retry.
     private static let maximumTranscriptLength = 50_000
 
+    private static let oversizedMessage = "The transcript was too long to be real, so it wasn't used."
+
     /// Scalars, not Characters: one Character can carry any number of combining marks.
     private static func isOversized(_ text: String) -> Bool {
         text.unicodeScalars.count > maximumTranscriptLength
@@ -475,7 +477,7 @@ final class AppController {
             result = .failure(.cancelled)
         } else if case .success(let transcript) = result, Self.isOversized(transcript.text) {
             Self.log.notice("transcription rejected id=\(id, privacy: .public) reason=oversized")
-            result = .failure(.failed("The transcript was too long to be real, so it wasn't used."))
+            result = .failure(.failed(Self.oversizedMessage))
         }
 
         var text: String
@@ -697,13 +699,21 @@ final class AppController {
                                                   requestTimeout: Retry.requestTimeout(within: budget))
                 )
             let seconds = (ContinuousClock.now - started).formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1)))
-            return text.isEmpty ? "Heard nothing (\(seconds)). Speak while it listens." : "“\(text)” · \(seconds)"
+            return Self.testResult(text, took: seconds)
         } catch {
             return error.localizedDescription
         }
     }
 
     static let testDuration: TimeInterval = 4
+
+    static func testResult(_ text: String, took seconds: String) -> String {
+        guard !isOversized(text) else { return "\(oversizedMessage) (\(seconds))" }
+        let line = PlainText.singleLine(text)
+        return line.isEmpty
+            ? "Heard nothing (\(seconds)). Speak while it listens."
+            : "“\(PlainText.preview(line, limit: 300))” · \(seconds)"
+    }
 
     /// A newer version is out: one quiet note, unless a take is in progress. The menu keeps the link.
     private func announceUpdate(_ version: String) {
@@ -749,9 +759,11 @@ final class AppController {
             }
             cleanupTask = task
             defer { cleanupTask = nil }
-            let reply = try await task.value
-            // As with Cancel: a Skip clicked as the reply arrived still wins.
+            let result = await task.result
+            // As with Cancel, Skip wins over whatever had just arrived: a reply or a failure.
+            // So look before unwrapping; `task.value` would throw the failure first.
             if task.isCancelled { throw CancellationError() }
+            let reply = try result.get()
             guard !Self.isOversized(reply) else {
                 outcome = "rejected"
                 Self.log.notice("cleanup rejected: reply too long")

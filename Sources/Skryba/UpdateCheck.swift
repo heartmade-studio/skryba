@@ -79,7 +79,8 @@ final class UpdateCheck {
     /// Compares dotted versions number by number: "1.10" is newer than "1.9", "1.5.1" than "1.5".
     /// Anything that isn't plain numbers is never newer, so an odd tag can't nag.
     nonisolated static func isNewer(_ candidate: String, than current: String) -> Bool {
-        guard let new = numbers(candidate), let old = numbers(current) else { return false }
+        // The length check keeps a tag from making a menu item of any size.
+        guard candidate.utf8.count <= 20, let new = numbers(candidate), let old = numbers(current) else { return false }
         for index in 0..<max(new.count, old.count) {
             let a = index < new.count ? new[index] : 0
             let b = index < old.count ? old[index] : 0

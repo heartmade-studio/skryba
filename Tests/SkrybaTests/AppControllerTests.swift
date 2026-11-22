@@ -14,11 +14,12 @@ final class AppControllerTests {
         let copied: [String]
         let audioKept: Bool
         let phase: AppController.Phase
+        let hud: RecordingHUD.Style?
     }
 
     private func dictate(
         transcript: String, cancelAsTranscriptArrives: Bool = false,
-        cleaned: String? = nil, skipAsCleanupArrives: Bool = false
+        cleaned: String? = nil, cleanupError: (any Error)? = nil, skipAsCleanupArrives: Bool = false
     ) async throws -> Outcome {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -26,7 +27,7 @@ final class AppControllerTests {
         settings.provider = .openai
         settings.vocabulary = ""
         settings.replacements = ""
-        settings.cleanupEnabled = cleaned != nil
+        settings.cleanupEnabled = cleaned != nil || cleanupError != nil
 
         let audio = root.appendingPathComponent("take.m4a")
         try Data("audio".utf8).write(to: audio)
@@ -42,10 +43,12 @@ final class AppControllerTests {
         }
         outside.cleanUp = { [unowned self] in
             if skipAsCleanupArrives { controller.cancelTranscription() }
+            if let cleanupError { throw cleanupError }
             return cleaned ?? ""
         }
         outside.copy = { [unowned self] in copied.append($0) }
-        controller = AppController(settings: settings, pendingRecordings: queue, hud: RecordingHUD(presents: false), outside: outside)
+        let hud = RecordingHUD(presents: false)
+        controller = AppController(settings: settings, pendingRecordings: queue, hud: hud, outside: outside)
 
         controller.retry(item)
         let limit = ContinuousClock.now + .seconds(20)
@@ -55,7 +58,8 @@ final class AppControllerTests {
         return Outcome(
             copied: copied,
             audioKept: queue.items.contains(item) && FileManager.default.fileExists(atPath: item.url.path),
-            phase: controller.phase
+            phase: controller.phase,
+            hud: hud.style
         )
     }
 
@@ -85,6 +89,21 @@ final class AppControllerTests {
     @Test func skipWinsOverACleanupThatJustArrived() async throws {
         let result = try await dictate(transcript: "yyy dzień dobry", cleaned: "dzień dobry", skipAsCleanupArrives: true)
         #expect(result.copied == ["yyy dzień dobry"])
+    }
+
+    /// Both ways cleanup can end just before the click: an error, and its deadline.
+    @Test(arguments: [0, 1]) func skipWinsOverACleanupThatJustFailed(_ kind: Int) async throws {
+        let error: any Error = kind == 0 ? SkrybaError.api(provider: "OpenAI", status: 500) : Retry.TimedOut()
+        let result = try await dictate(transcript: "yyy dzień dobry", cleanupError: error, skipAsCleanupArrives: true)
+        #expect(result.copied == ["yyy dzień dobry"])
+        #expect(result.hud == .info("Copied. Press ⌘V to paste."))
+    }
+
+    @Test func aCleanupFailureWithoutSkipStillWarns() async throws {
+        let error = SkrybaError.api(provider: "OpenAI", status: 500)
+        let result = try await dictate(transcript: "yyy dzień dobry", cleanupError: error)
+        #expect(result.copied == ["yyy dzień dobry"])
+        #expect(result.hud == .info("Copied. Press ⌘V to paste. AI cleanup skipped. \(error.localizedDescription)"))
     }
 
     @Test func anOversizedTranscriptKeepsTheRecording() async throws {

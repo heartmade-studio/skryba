@@ -18,6 +18,13 @@ enum PlainText {
             .joined(separator: " ")
     }
 
+    /// The start of a text, for a menu item or a form. Counted in scalars, like the size limit:
+    /// one Character can carry any number of combining marks. Never for text that gets pasted.
+    static func preview(_ text: String, limit: Int) -> String {
+        let scalars = text.unicodeScalars
+        return scalars.count > limit ? String(String.UnicodeScalarView(scalars.prefix(limit))) + "…" : text
+    }
+
     private static func isHidden(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.value {
         case 0x09...0x0D, 0x85: false // tab and line breaks; they become spaces
