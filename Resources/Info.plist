@@ -15,11 +15,11 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.7.0</string>
+	<string>1.8.0</string>
 	<key>CFBundleVersion</key>
-	<string>16</string>
+	<string>17</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
+	<string>15.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>LSApplicationCategoryType</key>
@@ -27,6 +27,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Skryba records your voice only while you dictate: while you hold the shortcut, or in hands-free mode until you tap Fn again (at most 5 minutes). The recording is sent to the transcription provider you chose (Groq or Cloudflare), or transcribed on this Mac with whisper.cpp if you set that up.</string>
+	<string>Skryba records your voice only while you dictate: while you hold the shortcut, or in hands-free mode until you tap Fn again (at most 5 minutes). The recording is sent to the transcription provider you chose (Groq, Cloudflare or OpenAI), or transcribed on this Mac with whisper.cpp if you set that up.</string>
 </dict>
 </plist>

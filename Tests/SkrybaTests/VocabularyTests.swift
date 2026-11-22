@@ -10,6 +10,10 @@ struct VocabularyTests {
         #expect(Vocabulary("  ").prompt == "")
     }
 
+    @Test func everyKindOfLineBreakSeparatesTerms() {
+        #expect(Vocabulary("Heartmade\r\nHermes\rGroq\nSkryba").terms == ["Heartmade", "Hermes", "Groq", "Skryba"])
+    }
+
     @Test func fixesNearMisses() {
         #expect(vocabulary.correct("Pracuję w Hrtmade od lat.") == "Pracuję w Heartmade od lat.")
         #expect(vocabulary.correct("hertmade") == "Heartmade")

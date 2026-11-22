@@ -143,6 +143,8 @@ struct GroqClient: ChatClient {
             to: Self.transcriptionEndpoint,
             contentType: form.contentType,
             body: try form.finish(withAudio: fileURL),
+            // An idle timeout for one part, deliberately not `Retry.requestTimeout`: a stalled part of
+            // a 5-minute take then retries after 30 s instead of 56. The shared deadline still applies.
             timeout: 30,
             label: "transcription"
         )
@@ -352,11 +354,11 @@ enum SkrybaError: LocalizedError {
         case .recordingFailed:
             "Could not start recording."
         case .api(let provider, let status, let message) where status == 401 || status == 403:
-            "\(provider) rejected the credentials (\(message)). Check them in Settings."
+            "\(provider) rejected the credentials (\(PlainText.summary(message))). Check them in Settings."
         case .api(let provider, _, let message):
-            "\(provider): \(message)"
+            "\(provider): \(PlainText.summary(message))"
         case .incompleteReply(let reason):
-            "The reply was incomplete (\(reason))."
+            "The reply was incomplete (\(PlainText.summary(reason)))."
         }
     }
 }

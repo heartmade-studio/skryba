@@ -116,6 +116,12 @@ log stream --predicate 'subsystem == "pl.heartmade.skryba"' --level info
       field; if it pastes, the README's Electron caveat applies.
 - [ ] Copy something right after releasing Fn, before the paste. Your copied item is not
       overwritten or pasted, and the transcript is under **Copy last**.
+- [ ] In Terminal, run `bash --norc`, then dictate several sentences with local Whisper: they
+      arrive as one line at the prompt and nothing runs until you press Return.
+- [ ] Choose **Cancel transcription** in the menu right after releasing the trigger: it cancels
+      and the recording stays saved.
+- [ ] Force-quit Skryba during *Transcribing on this Mac…*, then relaunch:
+      `ls "$TMPDIR/pl.heartmade.skryba"` shows no `local-*` folder.
 - [ ] Clipboard restore: copy a word, dictate, then ⌘V. Your original word comes back.
 - [ ] Slow app: copy a word, start a long reply streaming in the Claude app, dictate into its
       prompt twice in a row. Both takes paste the transcript, never the copied word.

@@ -321,7 +321,8 @@ struct SettingsView: View {
                     Install whisper.cpp (brew install whisper-cpp) and download a multilingual model, \
                     e.g. ggml-large-v3-turbo.bin (1.6 GB, best for Polish) or ggml-small.bin (0.5 GB, \
                     faster). Choose it as the provider, or as a fallback for when the cloud is offline or \
-                    fails. It's slower than Groq.
+                    fails. It's slower than Groq. whisper-cli is started by Skryba and may share its \
+                    permissions, so only choose a program you trust.
                     """)
             }
             if showsLocalSetup {

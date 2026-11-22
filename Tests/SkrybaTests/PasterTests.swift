@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import Skryba
 
@@ -35,5 +36,29 @@ struct PasterAfterPasteTests {
     @Test func neverTouchesAClipboardTheUserChangedAfterPaste() {
         #expect(Paster.afterPaste(read: true, clipboardUnchanged: false) == .leaveAlone)
         #expect(Paster.afterPaste(read: false, clipboardUnchanged: false) == .leaveAlone)
+    }
+}
+
+struct PasterClipboardTests {
+    /// Regression: the promise is fulfilled on the reading thread; assuming the main one trapped.
+    @Test func thePromiseCanBeReadOffTheMainThread() async {
+        let watcher = Paster.ReadWatcher(text: "transcript")
+        #expect(!watcher.wasRead)
+        let supplied = await withCheckedContinuation { continuation in
+            Thread.detachNewThread {
+                let item = NSPasteboardItem()
+                watcher.pasteboard(nil, item: item, provideDataForType: .string)
+                continuation.resume(returning: item.string(forType: .string))
+            }
+        }
+        #expect(supplied == "transcript")
+        #expect(watcher.wasRead)
+    }
+
+    @Test @MainActor func copyingLeavesOneLine() {
+        let pasteboard = NSPasteboard.withUniqueName() // never the user's clipboard
+        defer { pasteboard.releaseGlobally() }
+        Paster.copy("echo one\necho two\n", to: pasteboard)
+        #expect(pasteboard.string(forType: .string) == "echo one echo two")
     }
 }

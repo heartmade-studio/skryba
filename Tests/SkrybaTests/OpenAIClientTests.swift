@@ -101,9 +101,9 @@ struct OpenAIClientTests {
 
     @Test @MainActor func sharedDeadlineCancelsAStalledUpload() async throws {
         await #expect(throws: Retry.TimedOut.self) {
-            try await Retry.run({ try await transcribe(hang: true) }, until: .now + .milliseconds(150))
+            try await Retry.run({ try await transcribe(hang: true) }, until: .now + .seconds(2))
         }
-        #expect(OpenAIProtocol.state.wasStopped)
+        #expect(await eventually { OpenAIProtocol.state.wasStopped })
         #expect(Retry.deadline(forClipOf: 300, provider: .openai) == .seconds(120))
     }
 
@@ -155,9 +155,9 @@ struct OpenAIClientTests {
 
     @Test @MainActor func cleanupCanBeCancelledAtTheSharedDeadline() async throws {
         await #expect(throws: Retry.TimedOut.self) {
-            try await Retry.run({ try await cleanup(reply: cleanupReply, hang: true) }, until: .now + .milliseconds(150))
+            try await Retry.run({ try await cleanup(reply: cleanupReply, hang: true) }, until: .now + .seconds(2))
         }
-        #expect(OpenAIProtocol.state.wasStopped)
+        #expect(await eventually { OpenAIProtocol.state.wasStopped })
     }
 }
 

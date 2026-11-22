@@ -57,6 +57,13 @@ final class PendingRecordings {
 
     /// Reads the queue from disk and deletes recordings older than `maximumAge`.
     func load(now: Date = .now) {
+        if FileManager.default.fileExists(atPath: directory.path) {
+            do {
+                try FileManager.default.createPrivateDirectory(at: directory)
+            } catch {
+                Self.log.error("could not make the queue private: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         items = Self.read(from: directory, now: now)
         deleteExpired(now: now)
     }
@@ -89,9 +96,7 @@ final class PendingRecordings {
     }
 
     private func prepareDirectory() throws {
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]
-        )
+        try FileManager.default.createPrivateDirectory(at: directory)
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         var url = directory

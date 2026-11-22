@@ -3,6 +3,10 @@ import os
 import Security
 
 /// Stores API credentials in the login keychain — never in UserDefaults or the repo.
+///
+/// No `kSecAttrAccessible…ThisDeviceOnly`: macOS supports it only in the data-protection keychain
+/// (see SecItem.h), which needs a provisioning profile that Skryba's distribution doesn't have.
+/// Without one, adding such an item fails with -34018 (tried ad-hoc and Apple Development signed).
 enum Keychain {
     /// One keychain item per credential.
     enum Account: String {
@@ -37,20 +41,26 @@ enum Keychain {
 
     /// Stores the key (an empty value deletes it). Updates in place, so a failed write never
     /// destroys the previous key. Returns false if the keychain refused.
-    static func save(_ value: String, for account: Account) -> Bool {
+    static func save(
+        _ value: String, for account: Account,
+        // Tests replace these, so they never touch a real keychain.
+        update: (CFDictionary, CFDictionary) -> OSStatus = SecItemUpdate,
+        add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemAdd,
+        delete: (CFDictionary) -> OSStatus = SecItemDelete
+    ) -> Bool {
         let query = baseQuery(account)
         guard !value.isEmpty else {
-            let status = SecItemDelete(query as CFDictionary)
+            let status = delete(query as CFDictionary)
             guard status == errSecSuccess || status == errSecItemNotFound else { log(status, "delete"); return false }
             return true
         }
 
         let data = Data(value.utf8)
-        var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        var status = update(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
             var attributes = query
             attributes[kSecValueData as String] = data
-            status = SecItemAdd(attributes as CFDictionary, nil)
+            status = add(attributes as CFDictionary, nil)
         }
         guard status == errSecSuccess else { log(status, "save"); return false }
         return true

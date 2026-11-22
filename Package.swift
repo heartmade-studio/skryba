@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Skryba",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     targets: [
         .executableTarget(
             name: "Skryba",

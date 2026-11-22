@@ -1,6 +1,6 @@
 # AGENTS.md — skryba
 
-Public, open-source macOS menu-bar app (Swift 6, SwiftUI + AppKit, no dependencies) for
+Public, open-source macOS 15+ menu-bar app (Swift 6, SwiftUI + AppKit, no dependencies) for
 push-to-talk dictation via Groq Whisper, Cloudflare Workers AI or OpenAI gpt-transcribe (with optional
 local whisper.cpp). Published under the `heartmade-studio` GitHub org as a showcase, so the code must
 stay small, readable, and well commented.
@@ -23,7 +23,10 @@ stay small, readable, and well commented.
   No `.env` files, no keys in tests or docs.
 - No third-party dependencies without a strong reason. The small footprint is the point.
 - Keep everything under `@MainActor` unless there's a reason not to. Carbon callbacks arrive on
-  the main thread (`MainActor.assumeIsolated`).
+  the main thread (`MainActor.assumeIsolated`). Pasteboard promises don't: AppKit fulfils them on
+  the reading thread, so `Paster.ReadWatcher` stays off the main actor.
+- Text from a provider or whisper-cli is one line without hidden control characters
+  (`PlainText.singleLine`) before it is judged, shown as the last transcript, copied or pasted.
 - The HUD must stay a non-activating panel. Taking focus would break pasting.
 - One take at a time (`AppController.Phase`). Timers and tasks must check the take ID before acting.
 - Hands-free is a recording mode (`Phase.recording(.handsFree)`, entered by `FnGesture`), so it ends

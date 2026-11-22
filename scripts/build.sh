@@ -2,7 +2,7 @@
 # Builds build/Skryba.app from the Swift package.
 #   scripts/build.sh            build for this Mac only
 #   scripts/build.sh --install  build, copy to /Applications and launch
-#   scripts/build.sh --dmg      universal build (Apple Silicon and Intel), packed as build/Skryba.dmg
+#   scripts/build.sh --dmg      universal build (Apple Silicon and Intel), packed as build/Skryba.dmg + .sha256
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -57,8 +57,8 @@ if grep -q '^Authority=Apple Development:' <<<"$SIGNATURE_INFO"; then
   # The WWDR marker on the intermediate limits this to Apple's developer certificates.
   REQUIREMENT="designated => anchor apple generic and identifier \"$BUNDLE_ID\" and certificate 1[field.1.2.840.113635.100.6.2.1] exists and certificate leaf[subject.OU] = \"$TEAM_ID\""
   codesign --force --sign "$IDENTITY" --requirements "=$REQUIREMENT" "$APP"
-  codesign --verify --strict "$APP"
 fi
+codesign --verify --strict "$APP"
 echo "Built $APP (signed with: $IDENTITY)"
 
 if [[ "$MODE" == "--dmg" ]]; then
@@ -69,6 +69,7 @@ if [[ "$MODE" == "--dmg" ]]; then
   ln -s /Applications "$STAGE/Applications"
   rm -f "build/$APP_NAME.dmg"
   hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$STAGE" -format UDZO "build/$APP_NAME.dmg"
+  (cd build && shasum -a 256 "$APP_NAME.dmg" > "$APP_NAME.dmg.sha256")
   echo "Packed build/$APP_NAME.dmg ($(lipo -archs "$APP/Contents/MacOS/$APP_NAME"))"
 fi
 

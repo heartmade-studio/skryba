@@ -402,7 +402,8 @@ final class AppController {
     /// Stops the upload or the local run. The recording stays saved.
     /// During AI cleanup it skips only the cleanup: the plain transcript still goes out.
     func cancelTranscription() {
-        guard phase == .transcribing, hud.style?.isCancellable == true else { return }
+        // The phase decides, not the HUD: the menu offers Cancel before the HUD has caught up.
+        guard phase == .transcribing else { return }
         if let cleanupTask { cleanupTask.cancel() } else { job?.cancel() }
     }
 
@@ -461,7 +462,7 @@ final class AppController {
             let invented = Hallucinations.isLikely(
                 transcript.text, prompt: vocabulary.prompt, voicedDuration: audio.voicedDuration
             )
-            text = invented ? "" : vocabulary.correct(transcript.text)
+            text = invented ? "" : PlainText.singleLine(vocabulary.correct(transcript.text))
         }
 
         var cleanupWarning: String?
@@ -708,7 +709,7 @@ final class AppController {
             defer { cleanupTask = nil }
             let reply = try await task.value
             // Judge exactly the text that would be pasted.
-            let cleaned = vocabulary.correct(reply)
+            let cleaned = PlainText.singleLine(vocabulary.correct(reply))
             guard TextCleanup.isAllowed(original: text, cleaned: cleaned, replacements: replacements) else {
                 outcome = "rejected"
                 // Never log the dictated words.

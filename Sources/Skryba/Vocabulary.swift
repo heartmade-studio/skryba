@@ -11,7 +11,8 @@ struct Vocabulary {
 
     init(_ raw: String) {
         terms = raw
-            .split(whereSeparator: { ",;\n".contains($0) })
+            // Not `",;\n".contains`: a pasted "\r\n" is a single Character and wouldn't match.
+            .split { $0 == "," || $0 == ";" || $0.isNewline }
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
     }
