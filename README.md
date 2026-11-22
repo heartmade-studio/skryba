@@ -187,7 +187,8 @@ with **Test**, and grant two permissions:
   on your AI cleanup replacement list: replacements never reach Whisper, so "CLAUDE.md" only in
   the replacements can come back as ".md", while in the vocabulary it comes back right.
 - **The text is always one line.** Line breaks from the transcription become spaces, because a
-  pasted line break can run a command in a terminal. Hidden control characters are removed.
+  pasted line break can run a command in a terminal. Hidden control characters are removed. A
+  reply over 50,000 characters (no real take comes close) is refused and the recording is kept.
 - **Language:** setting it explicitly (rather than *Auto-detect*) improves accuracy on short clips.
 - **Offline or a bad connection:** see [No internet](#no-internet) below.
 - Silence detection is a level meter, not speech recognition. Loud background noise can pass it,
@@ -356,6 +357,9 @@ Cloudflare dashboard shows the real numbers.
   two targeted repairs per operation, at Whisper's fallback temperature. A join failure never uploads
   the original recording as a whole. All parts, confidence retries and repairs share one cancellable
   cloud deadline. If repair fails, the original stays saved for a manual retry; partial text isn't delivered.
+- **An error shows only an HTTP code.** Skryba doesn't repeat a provider's own error text. 401 or
+  403 is the key or token, 404 the model or account, 429 a rate, quota or credit limit; the
+  provider's dashboard has the details.
 - **Takes are discarded as "No speech detected", or noise gets through.** Watch the logged levels
   and request timings, then open an issue with a few lines:
   ```bash

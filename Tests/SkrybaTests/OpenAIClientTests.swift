@@ -79,12 +79,12 @@ struct OpenAIClientTests {
             _ = try await transcribe(reply: #"{"error":{"message":"Request rejected"}}"#, status: status)
             Issue.record("Expected an API error")
         } catch {
-            guard case SkrybaError.api(let provider, let actual, let message) = error else {
+            guard case SkrybaError.api(let provider, let actual) = error else {
                 Issue.record("Expected an API error"); return
             }
             #expect(provider == "OpenAI")
             #expect(actual == status)
-            #expect(message == "Request rejected")
+            #expect(!error.localizedDescription.contains("Request rejected"))
             #expect(Retry.isTransient(error) == (status == 429 || status >= 500))
             #expect(Retry.failureKind(for: error) == "http_status_\(status)")
         }

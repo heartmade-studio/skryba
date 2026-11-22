@@ -78,8 +78,9 @@ enum Retry {
         if isCancellation(error) { return "cancelled" }
         if let error = error as? URLError { return "url_error_\(error.code.rawValue)" }
         if error is GroqClient.Transcription.JoinFailure { return "transcript_unaligned_overlap" }
-        // Status 0: the client gave up before any HTTP status (no reply, an invalid account ID).
-        if case SkrybaError.api(_, let status, _) = error { return status == 0 ? "no_http_status" : "http_status_\(status)" }
+        if case SkrybaError.invalidAccountID = error { return "invalid_account_id" }
+        // Status 0: no HTTP reply.
+        if case SkrybaError.api(_, let status) = error { return status == 0 ? "no_http_status" : "http_status_\(status)" }
         if case SkrybaError.incompleteReply(let reason) = error {
             // Only fixed, app-owned reasons may reach the log. Chat finish reasons come from a
             // provider and must never be echoed verbatim, even in a diagnostic error label.
@@ -129,7 +130,7 @@ enum Retry {
                 .dnsLookupFailed, .secureConnectionFailed,
             ].contains(error.code)
         }
-        if case SkrybaError.api(_, let status, _) = error {
+        if case SkrybaError.api(_, let status) = error {
             return status == 0 || status == 429 || status >= 500
         }
         return false

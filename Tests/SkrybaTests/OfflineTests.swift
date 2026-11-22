@@ -13,13 +13,13 @@ struct RetryTests {
     @Test func stalledOrBusyConnectionsAreRetried() {
         #expect(Retry.isTransient(URLError(.timedOut)))
         #expect(Retry.isTransient(URLError(.networkConnectionLost)))
-        #expect(Retry.isTransient(SkrybaError.api(provider: "Groq", status: 503, message: "")))
-        #expect(Retry.isTransient(SkrybaError.api(provider: "Groq", status: 429, message: "")))
+        #expect(Retry.isTransient(SkrybaError.api(provider: "Groq", status: 503)))
+        #expect(Retry.isTransient(SkrybaError.api(provider: "Groq", status: 429)))
     }
 
     @Test func rejectedCredentialsAreNotRetried() {
-        #expect(!Retry.isTransient(SkrybaError.api(provider: "Groq", status: 401, message: "")))
-        #expect(!Retry.isTransient(SkrybaError.api(provider: "Cloudflare", status: 400, message: "")))
+        #expect(!Retry.isTransient(SkrybaError.api(provider: "Groq", status: 401)))
+        #expect(!Retry.isTransient(SkrybaError.api(provider: "Cloudflare", status: 400)))
     }
 
     @Test func bothKindsOfCancellationAreRecognised() {
@@ -64,8 +64,8 @@ struct RetryTests {
     @Test func failureDiagnosticsDistinguishAppTimeoutsFromTransportAndHTTPFailures() {
         #expect(Retry.failureKind(for: Retry.TimedOut()) == "app_deadline")
         #expect(Retry.failureKind(for: URLError(.networkConnectionLost)) == "url_error_-1005")
-        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 503, message: "private response")) == "http_status_503")
-        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 0, message: "No response.")) == "no_http_status")
+        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 503)) == "http_status_503")
+        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 0)) == "no_http_status")
         #expect(Retry.failureKind(for: CancellationError()) == "cancelled")
         #expect(Retry.failureKind(for: GroqClient.Transcription.JoinFailure(boundary: 2)) == "transcript_unaligned_overlap")
         #expect(Retry.milliseconds(.milliseconds(1234) + .microseconds(500)) == 1234)
@@ -126,7 +126,7 @@ struct RetryDeadlineTests {
         var attempts = 0
         await #expect(throws: SkrybaError.self) {
             try await Retry.attempts(within: .seconds(5), onAttempt: { attempts = $0 }) { () async throws -> String in
-                throw SkrybaError.api(provider: "Groq", status: 401, message: "")
+                throw SkrybaError.api(provider: "Groq", status: 401)
             }
         }
         #expect(attempts == 1)
@@ -304,11 +304,18 @@ struct CloudflareTests {
         #expect(throws: SkrybaError.self) { try CloudflareClient.text(from: reply) }
     }
 
-    @Test func readsErrorsInBothFormats() {
-        let workersAI = Data(#"{"success":false,"errors":[{"code":7003,"message":"No route"}]}"#.utf8)
-        let openAI = Data(#"{"error":{"message":"Unknown model"}}"#.utf8)
-        #expect(CloudflareClient.errorMessage(in: workersAI, status: 400) == "No route")
-        #expect(CloudflareClient.errorMessage(in: openAI, status: 400) == "Unknown model")
+    @Test func anInvalidAccountIDIsNeitherSentNorRetried() async {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).m4a")
+        try? Data("audio".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        do {
+            _ = try await CloudflareClient(accountID: "bad", apiToken: "test").transcribe(fileURL: file, language: "", prompt: "")
+            Issue.record("Expected an error")
+        } catch {
+            #expect(!Retry.isTransient(error))
+            #expect(Retry.failureKind(for: error) == "invalid_account_id")
+            #expect(error.localizedDescription == "The Cloudflare account ID is invalid. Check it in Settings.")
+        }
     }
 
     @Test func accountIDsAreThirtyTwoHexCharacters() {

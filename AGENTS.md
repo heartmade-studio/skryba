@@ -27,6 +27,10 @@ stay small, readable, and well commented.
   the reading thread, so `Paster.ReadWatcher` stays off the main actor.
 - Text from a provider or whisper-cli is one line without hidden control characters
   (`PlainText.singleLine`) before it is judged, shown as the last transcript, copied or pasted.
+  An oversized reply is refused, never cut (`AppController.isOversized`).
+- A provider's error wording is never shown or logged. `SkrybaError` turns the status into a message.
+- Cancel and Skip win over a reply that already arrived: check cancellation after each `await`,
+  before anything is deleted, copied or pasted (`AppControllerTests`).
 - The HUD must stay a non-activating panel. Taking focus would break pasting.
 - One take at a time (`AppController.Phase`). Timers and tasks must check the take ID before acting.
 - Hands-free is a recording mode (`Phase.recording(.handsFree)`, entered by `FnGesture`), so it ends

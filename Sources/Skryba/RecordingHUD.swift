@@ -46,6 +46,12 @@ final class RecordingHUD {
 
     private let model = Model()
     private var panel: NSPanel?
+    /// False in tests: the state changes, but nothing appears on screen.
+    private let presents: Bool
+
+    init(presents: Bool = true) {
+        self.presents = presents
+    }
 
     /// Called when the user clicks Cancel in the HUD.
     var onCancel: () -> Void {
@@ -65,6 +71,7 @@ final class RecordingHUD {
         self.style = style
         model.style = style
         model.note = note
+        guard presents else { return }
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.ignoresMouseEvents = !(style.isCancellable || style.isDismissible)
@@ -103,7 +110,7 @@ final class RecordingHUD {
     }
 
     /// Diagnostics for a HUD that is shown but not seen. Logs only window geometry and state,
-    /// never message text (an error can quote a server reply).
+    /// never message text (an info or error message is no diagnostic).
     private func logPlacement(of panel: NSPanel, for style: Style, moment: StaticString) {
         let screens = NSScreen.screens
         let mouse = NSEvent.mouseLocation

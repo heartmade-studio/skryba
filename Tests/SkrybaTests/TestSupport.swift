@@ -49,3 +49,17 @@ func eventually(_ condition: @Sendable () -> Bool) async -> Bool {
     }
     return true
 }
+
+/// Settings that never reach the disk. A throwaway suite leaves an empty file behind in
+/// ~/Library/Preferences, even after `removePersistentDomain`.
+final class MemoryDefaults: UserDefaults {
+    private nonisolated(unsafe) var values: [String: Any] = [:] // each test uses its own, serially
+
+    override func object(forKey key: String) -> Any? { values[key] }
+    override func string(forKey key: String) -> String? { values[key] as? String }
+    override func data(forKey key: String) -> Data? { values[key] as? Data }
+    override func bool(forKey key: String) -> Bool { values[key] as? Bool ?? false }
+    override func set(_ value: Any?, forKey key: String) { values[key] = value }
+    override func set(_ value: Bool, forKey key: String) { values[key] = value }
+    override func set(_ value: Int, forKey key: String) { values[key] = value }
+}

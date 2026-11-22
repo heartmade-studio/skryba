@@ -177,12 +177,10 @@ struct GroqClient: ChatClient {
         let (data, response) = try await transport.upload(for: request, from: body)
         Self.log.notice("groq \(label, privacy: .public): \(body.count / 1024) KB, \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         guard let http = response as? HTTPURLResponse else {
-            throw SkrybaError.api(provider: "Groq", status: 0, message: "No response.")
+            throw SkrybaError.api(provider: "Groq", status: 0)
         }
         guard http.statusCode == 200 else {
-            let message = (try? JSONDecoder().decode(ErrorEnvelope.self, from: data))?.error.message
-                ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
-            throw SkrybaError.api(provider: "Groq", status: http.statusCode, message: message)
+            throw SkrybaError.api(provider: "Groq", status: http.statusCode)
         }
         return data
     }
@@ -337,28 +335,42 @@ struct GroqClient: ChatClient {
             String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), value)
         }
     }
-
-    private struct ErrorEnvelope: Decodable {
-        struct Body: Decodable { let message: String }
-        let error: Body
-    }
 }
 
 enum SkrybaError: LocalizedError {
     case recordingFailed
-    case api(provider: String, status: Int, message: String)
+    case invalidAccountID
+    /// Only the status: a provider's own wording must not appear as if Skryba said it.
+    case api(provider: String, status: Int)
     case incompleteReply(reason: String)
 
     var errorDescription: String? {
         switch self {
         case .recordingFailed:
             "Could not start recording."
-        case .api(let provider, let status, let message) where status == 401 || status == 403:
-            "\(provider) rejected the credentials (\(PlainText.summary(message))). Check them in Settings."
-        case .api(let provider, _, let message):
-            "\(provider): \(PlainText.summary(message))"
+        case .invalidAccountID:
+            "The Cloudflare account ID is invalid. Check it in Settings."
+        case .api(let provider, let status):
+            Self.message(provider: provider, status: status)
         case .incompleteReply(let reason):
-            "The reply was incomplete (\(PlainText.summary(reason)))."
+            reason == "length" ? "The reply hit its length limit." : "The reply was incomplete."
+        }
+    }
+
+    private static func message(provider: String, status: Int) -> String {
+        let code = "(HTTP \(status))"
+        return switch status {
+        case 0: "\(provider) didn't respond."
+        case 200: "\(provider) replied without a transcript."
+        case 400, 422: "\(provider) didn't accept the request \(code)."
+        case 401, 403: "\(provider) rejected the credentials \(code). Check them in Settings."
+        case 402: "\(provider) needs billing set up or credit added \(code)."
+        case 404: "\(provider) couldn't find the model or account \(code)."
+        case 408: "\(provider) timed out \(code)."
+        case 413: "The recording is too large for \(provider) \(code)."
+        case 429: "\(provider)'s rate or usage limit was reached \(code). Wait, or check your plan and credit."
+        case 500...599: "\(provider) is having problems \(code). Try again later."
+        default: "\(provider) couldn't complete the request \(code)."
         }
     }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Text from outside Skryba (a provider's reply, whisper-cli's output), made safe to paste or show.
+/// Text from outside Skryba (a provider's reply, whisper-cli's output), made safe to paste.
 enum PlainText {
     /// One line, without invisible control characters.
     ///
@@ -16,12 +16,6 @@ enum PlainText {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-    }
-
-    /// A provider's message, short enough for the HUD.
-    static func summary(_ text: String, limit: Int = 200) -> String {
-        let line = singleLine(text)
-        return line.count > limit ? line.prefix(limit) + "…" : line
     }
 
     private static func isHidden(_ scalar: Unicode.Scalar) -> Bool {

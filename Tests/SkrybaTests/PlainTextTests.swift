@@ -33,12 +33,4 @@ struct PlainTextTests {
             #expect(PlainText.singleLine(once) == once)
         }
     }
-
-    @Test func providerMessagesAreShortSingleLines() {
-        let error = SkrybaError.api(provider: "Groq", status: 500, message: "Busy\n" + String(repeating: "x", count: 5000))
-        let shown = error.localizedDescription
-        #expect(shown.hasPrefix("Groq: Busy x"))
-        #expect(shown.count < 220)
-        #expect(!shown.contains("\n"))
-    }
 }

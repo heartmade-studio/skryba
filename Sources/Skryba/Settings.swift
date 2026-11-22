@@ -75,7 +75,7 @@ final class Settings {
         didSet { defaults.set(replacements, forKey: Key.replacements) }
     }
 
-    @ObservationIgnored private let defaults = UserDefaults.standard
+    @ObservationIgnored private let defaults: UserDefaults
 
     enum TranscriptionProvider: String, CaseIterable, Identifiable {
         case groq, cloudflare, openai
@@ -200,11 +200,11 @@ final class Settings {
         return true
     }
 
-    init() {
-        let defaults = UserDefaults.standard
-        apiKey = Keychain.read(.groq) ?? ""
-        cloudflareToken = Keychain.read(.cloudflare) ?? ""
-        openAIKey = Keychain.read(.openai) ?? ""
+    init(defaults: UserDefaults = .standard, readKey: (Keychain.Account) -> String? = Keychain.read) {
+        self.defaults = defaults
+        apiKey = readKey(.groq) ?? ""
+        cloudflareToken = readKey(.cloudflare) ?? ""
+        openAIKey = readKey(.openai) ?? ""
         provider = defaults.string(forKey: Key.provider).flatMap(TranscriptionProvider.init) ?? .groq
         cloudAttempts = Retry.clampedAttempts(defaults.object(forKey: Key.cloudAttempts) as? Int ?? Retry.maximumAttempts)
         cloudflareAccountID = defaults.string(forKey: Key.cloudflareAccountID) ?? ""

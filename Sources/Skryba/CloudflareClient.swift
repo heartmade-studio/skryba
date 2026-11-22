@@ -44,7 +44,7 @@ struct CloudflareClient: ChatClient {
 
     private func post(path: String, body: Data, timeout: TimeInterval, label: String) async throws -> Data {
         guard Self.isValidAccountID(accountID) else {
-            throw SkrybaError.api(provider: "Cloudflare", status: 0, message: "The account ID is invalid.")
+            throw SkrybaError.invalidAccountID
         }
         var request = URLRequest(url: URL(string: "https://api.cloudflare.com/client/v4/accounts/\(accountID)/\(path)")!)
         request.httpMethod = "POST"
@@ -57,24 +57,16 @@ struct CloudflareClient: ChatClient {
         Self.log.notice("cloudflare \(label, privacy: .public): \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
-            throw SkrybaError.api(provider: "Cloudflare", status: status, message: Self.errorMessage(in: data, status: status))
+            throw SkrybaError.api(provider: "Cloudflare", status: status)
         }
         return data
-    }
-
-    /// Workers AI replies with `{"errors": [{"message": …}]}`; the OpenAI endpoint may use `{"error": {"message": …}}`.
-    static func errorMessage(in data: Data, status: Int) -> String {
-        (try? JSONDecoder().decode(Envelope.self, from: data))?.errors?.first?.message
-            ?? (try? JSONDecoder().decode(OpenAIError.self, from: data))?.error.message
-            ?? HTTPURLResponse.localizedString(forStatusCode: status)
     }
 
     /// The transcript from a Workers AI reply: `{"success": true, "result": {"text": "…"}}`.
     static func text(from data: Data) throws -> String {
         let envelope = try JSONDecoder().decode(Envelope.self, from: data)
         guard envelope.success, let text = envelope.result?.text else {
-            let message = envelope.errors?.first?.message ?? "No transcript in the reply."
-            throw SkrybaError.api(provider: "Cloudflare", status: 200, message: message)
+            throw SkrybaError.api(provider: "Cloudflare", status: 200)
         }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -88,14 +80,7 @@ struct CloudflareClient: ChatClient {
 
     private struct Envelope: Decodable {
         struct Result: Decodable { let text: String? }
-        struct Message: Decodable { let message: String }
         let success: Bool
         let result: Result?
-        let errors: [Message]?
-    }
-
-    private struct OpenAIError: Decodable {
-        struct Body: Decodable { let message: String }
-        let error: Body
     }
 }
