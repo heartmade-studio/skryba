@@ -13,9 +13,9 @@ into the text field you were typing in. No internet? The take is kept, and you c
 later or on your Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
 
 Vibe-coded by [Heartmade](https://heartmade.pl/en/) as a readable reference app: no dependencies,
-32 Swift files, about 4,700 lines including comments.
+34 Swift files, about 4,900 lines including comments.
 
-**Status: 1.7.0.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
+**Status: 1.8.0.** It is used daily on an Apple Silicon Mac with macOS 27. Other setups are
 untested, so bug reports are welcome.
 
 ## Screenshots
@@ -73,11 +73,15 @@ release      ──► discard if the level meter heard no voice, cut the silenc
 | `PasteTarget.swift` | Remembers the app, window and text field that had focus when the take started, read through the Accessibility API. |
 | `Paster.swift` | The paste step: a transient clipboard item, then ⌘V, then your clipboard restored once the app has read the text. It refuses if the focus moved, and never overwrites something you copied meanwhile. |
 | `RecordingHUD.swift` | A non-activating floating pill, so it never steals focus from the app you're typing in. |
+| `PlainText.swift` | Makes text from a provider or whisper-cli safe to paste: one line, no hidden control characters. |
+| `PrivateDirectory.swift` | Creates the folders for audio readable only by you, tightening existing ones. |
 | `Keychain.swift` | Keeps the API credentials in the macOS keychain, not in files or UserDefaults. |
 
 ## Requirements
 
-- macOS 14 Sonoma or later. Apple Silicon is tested; Intel should work but is untested.
+- macOS 15 Sequoia or later. On macOS 14, use
+  [Skryba 1.7.0](https://github.com/heartmade-studio/skryba/releases/tag/v1.7.0), the last release
+  that supports it; ignore its notices about newer versions. Apple Silicon is tested; Intel should work but is untested.
 - A Groq API key. The free tier is enough: [console.groq.com/keys](https://console.groq.com/keys).
   Or a Cloudflare account ID and a Workers AI API token, or an OpenAI API key with API billing enabled.
 - Optional, for offline use: [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
@@ -170,7 +174,7 @@ with **Test**, and grant two permissions:
   warns you in Settings until you do.
 - Many third-party keyboards don't send Fn to macOS. In that case, switch **Hold to dictate** to a
   custom shortcut (default ⌃⇧Space). A custom shortcut needs at least one modifier (F-keys may go
-  without). macOS 15+ refuses global hotkeys whose only modifiers are ⌥ or ⌥⇧.
+  without). macOS refuses global hotkeys whose only modifiers are ⌥ or ⌥⇧.
 - The text is pasted only where you started: the same app, window and text field. If you switch
   apps, windows, browser tabs or chats while it transcribes, the text goes to your clipboard
   instead. If you copy something in that moment, your copy is left alone and the transcript is only
@@ -182,6 +186,9 @@ with **Test**, and grant two permissions:
   or two for terms of eight letters or more. Put every name you dictate here, including the ones
   on your AI cleanup replacement list: replacements never reach Whisper, so "CLAUDE.md" only in
   the replacements can come back as ".md", while in the vocabulary it comes back right.
+- **The text is always one line.** Line breaks from the transcription become spaces, because a
+  pasted line break can run a command in a terminal. Hidden control characters are removed. A
+  reply over 50,000 characters (no real take comes close) is refused and the recording is kept.
 - **Language:** setting it explicitly (rather than *Auto-detect*) improves accuracy on short clips.
 - **Offline or a bad connection:** see [No internet](#no-internet) below.
 - Silence detection is a level meter, not speech recognition. Loud background noise can pass it,
@@ -223,6 +230,10 @@ upgrading and cannot reconstruct older history.
   left out of Time Machine) until they are transcribed. A take that couldn't be transcribed stays
   there until you transcribe or delete it from the menu, and for at most 7 days. Deleting a file on
   an SSD is not a secure erase.
+- **Temporary audio:** working copies live in a private temporary folder and are deleted after
+  use, or at the next launch if Skryba was killed.
+- **whisper-cli:** Skryba starts the program at the path in Settings, and macOS may treat it as
+  part of Skryba, permissions included. Only point it at a program you trust.
 - **Update check:** once a day Skryba asks GitHub for its latest release, a request that carries
   nothing about you or your dictations beyond what any web request does (your IP address). A newer
   version shows up as a download link in the menu; nothing is downloaded or installed by itself.
@@ -346,6 +357,9 @@ Cloudflare dashboard shows the real numbers.
   two targeted repairs per operation, at Whisper's fallback temperature. A join failure never uploads
   the original recording as a whole. All parts, confidence retries and repairs share one cancellable
   cloud deadline. If repair fails, the original stays saved for a manual retry; partial text isn't delivered.
+- **An error shows only an HTTP code.** Skryba doesn't repeat a provider's own error text. 401 or
+  403 is the key or token, 404 the model or account, 429 a rate, quota or credit limit; the
+  provider's dashboard has the details.
 - **Takes are discarded as "No speech detected", or noise gets through.** Watch the logged levels
   and request timings, then open an issue with a few lines:
   ```bash

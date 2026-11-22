@@ -56,9 +56,7 @@ struct OpenAIClient: ChatClient {
         Self.log.notice("openai \(label, privacy: .public): \(body.count / 1024) KB, \((ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds])), privacy: .public)")
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
-            let message = (try? JSONDecoder().decode(ErrorEnvelope.self, from: data))?.error.message
-                ?? HTTPURLResponse.localizedString(forStatusCode: status)
-            throw SkrybaError.api(provider: "OpenAI", status: status, message: message)
+            throw SkrybaError.api(provider: "OpenAI", status: status)
         }
         return data
     }
@@ -112,8 +110,4 @@ struct OpenAIClient: ChatClient {
     }
 
     private struct Reply: Decodable { let text: String }
-    private struct ErrorEnvelope: Decodable {
-        struct Body: Decodable { let message: String }
-        let error: Body
-    }
 }

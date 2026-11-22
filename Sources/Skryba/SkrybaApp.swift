@@ -80,7 +80,7 @@ struct MenuContent: View {
 
         if let last = controller.lastTranscript {
             Divider()
-            Button("Copy last: \(last.truncated(to: 40))") { Paster.copy(last) }
+            Button("Copy last: \(PlainText.preview(last, limit: 40))") { Paster.copy(last) }
             if let raw = controller.lastRawTranscript {
                 Button("Copy without AI cleanup") { Paster.copy(raw) }
             }
@@ -121,11 +121,5 @@ private extension PendingRecordings.Item {
         let seconds = Int(duration.rounded())
         let time = createdAt.formatted(date: Calendar.current.isDateInToday(createdAt) ? .omitted : .abbreviated, time: .shortened)
         return seconds > 0 ? "\(time) · \(seconds / 60):\(String(format: "%02d", seconds % 60))" : time
-    }
-}
-
-private extension String {
-    func truncated(to length: Int) -> String {
-        count > length ? prefix(length) + "…" : self
     }
 }

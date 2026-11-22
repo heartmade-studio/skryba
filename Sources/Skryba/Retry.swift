@@ -42,30 +42,30 @@ enum Retry {
     }
 
     /// Runs `operation` until it succeeds, up to `attemptLimit` times, all within `deadline`.
-    /// `onAttempt` reports each attempt as it starts (for the HUD).
+    /// `onAttempt` reports each attempt as it starts (for the HUD). Tests pass their own clock.
     @MainActor
-    static func attempts<T: Sendable>(
+    static func attempts<T: Sendable, C: Clock>(
         within deadline: Duration,
         attemptLimit: Int = maximumAttempts,
         onAttempt: (Int) -> Void = { _ in },
         onAttemptFailure: (Int, Duration, Error) -> Void = { _, _, _ in },
+        clock: C = ContinuousClock(),
         operation: @escaping @Sendable () async throws -> T
-    ) async throws -> T {
-        let clock = ContinuousClock()
-        let end = clock.now + deadline
+    ) async throws -> T where C.Duration == Duration {
+        let end = clock.now.advanced(by: deadline)
         let attemptLimit = clampedAttempts(attemptLimit)
         var attempt = 1
         while true {
             onAttempt(attempt)
             let attemptStarted = clock.now
             do {
-                return try await run(operation, until: min(end, clock.now + attemptBudget(within: deadline)))
+                return try await run(operation, until: min(end, clock.now.advanced(by: attemptBudget(within: deadline))), clock: clock)
             } catch {
-                onAttemptFailure(attempt, clock.now - attemptStarted, error)
+                onAttemptFailure(attempt, attemptStarted.duration(to: clock.now), error)
                 // Another attempt only if it could still get a fair share of the time.
-                let next = clock.now + delay(after: attempt)
+                let next = clock.now.advanced(by: delay(after: attempt))
                 guard attempt < attemptLimit, isTransient(error) || error is TimedOut,
-                      end - next >= deadline / 4 else { throw error }
+                      next.duration(to: end) >= deadline / 4 else { throw error }
                 try await Task.sleep(until: next, clock: clock)
                 attempt += 1
             }
@@ -78,8 +78,9 @@ enum Retry {
         if isCancellation(error) { return "cancelled" }
         if let error = error as? URLError { return "url_error_\(error.code.rawValue)" }
         if error is GroqClient.Transcription.JoinFailure { return "transcript_unaligned_overlap" }
-        // Status 0: the client gave up before any HTTP status (no reply, an invalid account ID).
-        if case SkrybaError.api(_, let status, _) = error { return status == 0 ? "no_http_status" : "http_status_\(status)" }
+        if case SkrybaError.invalidAccountID = error { return "invalid_account_id" }
+        // Status 0: no HTTP reply.
+        if case SkrybaError.api(_, let status) = error { return status == 0 ? "no_http_status" : "http_status_\(status)" }
         if case SkrybaError.incompleteReply(let reason) = error {
             // Only fixed, app-owned reasons may reach the log. Chat finish reasons come from a
             // provider and must never be echoed verbatim, even in a diagnostic error label.
@@ -98,10 +99,16 @@ enum Retry {
     static func run<T: Sendable>(
         _ operation: @escaping @Sendable () async throws -> T, until limit: ContinuousClock.Instant
     ) async throws -> T {
+        try await run(operation, until: limit, clock: ContinuousClock())
+    }
+
+    private static func run<T: Sendable, C: Clock>(
+        _ operation: @escaping @Sendable () async throws -> T, until limit: C.Instant, clock: C
+    ) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await operation() }
             group.addTask {
-                try await Task.sleep(until: limit, clock: .continuous)
+                try await Task.sleep(until: limit, clock: clock)
                 throw TimedOut()
             }
             defer { group.cancelAll() }
@@ -123,7 +130,7 @@ enum Retry {
                 .dnsLookupFailed, .secureConnectionFailed,
             ].contains(error.code)
         }
-        if case SkrybaError.api(_, let status, _) = error {
+        if case SkrybaError.api(_, let status) = error {
             return status == 0 || status == 429 || status >= 500
         }
         return false

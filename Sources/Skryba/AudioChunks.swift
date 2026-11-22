@@ -31,8 +31,8 @@ struct AudioChunks {
         // Share the recorder's root so launch/quit cleanup also removes copies left by a crash.
         let directory = AudioRecorder.directory
             .appendingPathComponent("chunks-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                                               attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createPrivateDirectory(at: AudioRecorder.directory)
+        try FileManager.default.createPrivateDirectory(at: directory)
         do {
             // The recorder produces 16 kHz mono. Sampling energy every 50 ms lets us move cuts
             // into pauses; overlap still protects words when someone speaks without pausing.

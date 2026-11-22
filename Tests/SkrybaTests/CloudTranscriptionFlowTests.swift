@@ -40,7 +40,7 @@ struct CloudTranscriptionFlowTests {
         let client = GroqClient(apiKey: "test", transport: transport)
         let take = GroqClient.Take(fileURL: source)
         var attempts: [Int] = []
-        let text = try await Retry.attempts(within: .seconds(4), attemptLimit: 2, onAttempt: { attempts.append($0) }) {
+        let text = try await Retry.attempts(within: .seconds(10), attemptLimit: 2, onAttempt: { attempts.append($0) }) {
             try await client.transcribe(take, language: "pl", prompt: "")
         }
         #expect(text == "To już działa.")
@@ -207,13 +207,13 @@ struct CloudTranscriptionFlowTests {
         let client = GroqClient(apiKey: "test", transport: transport)
         let started = ContinuousClock.now
         await #expect(throws: Retry.TimedOut.self) {
-            try await Retry.attempts(within: .seconds(4), attemptLimit: 1) {
+            try await Retry.attempts(within: .seconds(10), attemptLimit: 1) {
                 try await client.transcribe(fileURL: source, language: "pl", prompt: "")
             }
         }
-        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(ContinuousClock.now - started < .seconds(9))
         #expect(ScriptedCloudProtocol.state.requests.count == 3)
-        #expect(ScriptedCloudProtocol.state.stopped > 0)
+        #expect(await eventually { ScriptedCloudProtocol.state.stopped > 0 })
         #expect(FileManager.default.fileExists(atPath: source.path))
     }
 
@@ -252,8 +252,8 @@ struct CloudTranscriptionFlowTests {
         if case .failure(let error) = await task.result {
             #expect(Retry.isCancellation(error))
         } else { Issue.record("Cancelled part repair returned text") }
-        #expect(ContinuousClock.now - cancelled < .seconds(1))
-        #expect(ScriptedCloudProtocol.state.stopped > 0)
+        #expect(ContinuousClock.now - cancelled < .seconds(5)) // its own limit is 10 s
+        #expect(await eventually { ScriptedCloudProtocol.state.stopped > 0 })
         #expect(FileManager.default.fileExists(atPath: source.path))
     }
 

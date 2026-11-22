@@ -40,15 +40,17 @@ final class AppController {
     private(set) var accessibilityGranted = false
     private(set) var fnKeyFree = FnKey.isFreeForApps
 
-    let settings = Settings()
-    let pendingRecordings = PendingRecordings()
+    let settings: Settings
+    let pendingRecordings: PendingRecordings
     let network = NetworkMonitor()
     let updates = UpdateCheck()
 
-    @ObservationIgnored private let hotKey = HotKey()
+    /// Lazy: creating it installs an app-wide event handler, which tests mustn't do.
+    @ObservationIgnored private lazy var hotKey = HotKey()
     @ObservationIgnored private let fnKey = FnKey()
     @ObservationIgnored private let recorder = AudioRecorder()
-    @ObservationIgnored private let hud = RecordingHUD()
+    @ObservationIgnored private let hud: RecordingHUD
+    @ObservationIgnored private let outside: Outside
     @ObservationIgnored private let settingsWindow = SettingsWindow()
     /// Identifies the current take, so timers from an earlier take can't act on a newer one.
     @ObservationIgnored private var take = UUID()
@@ -77,6 +79,35 @@ final class AppController {
     }
     /// Hard cap on one take, in case the key-up is never seen.
     static let maximumRecordingDuration: TimeInterval = 5 * 60
+
+    /// Where the controller reaches outside the app. Tests replace these, so they use no network
+    /// and leave the user's clipboard alone.
+    struct Outside {
+        var transcribe: (@MainActor () async -> Transcription)?
+        var cleanUp: (@MainActor () async throws -> String)?
+        var copy: @MainActor (String) -> Void = { Paster.copy($0) }
+    }
+
+    init(
+        settings: Settings = Settings(), pendingRecordings: PendingRecordings = PendingRecordings(),
+        hud: RecordingHUD = RecordingHUD(), outside: Outside = Outside()
+    ) {
+        self.settings = settings
+        self.pendingRecordings = pendingRecordings
+        self.hud = hud
+        self.outside = outside
+    }
+
+    /// Five minutes of very fast speech is about 15,000 characters. Far beyond that a reply is
+    /// broken or hostile, and it is refused rather than cut, so the recording stays for a retry.
+    private static let maximumTranscriptLength = 50_000
+
+    private static let oversizedMessage = "The transcript was too long to be real, so it wasn't used."
+
+    /// Scalars, not Characters: one Character can carry any number of combining marks.
+    private static func isOversized(_ text: String) -> Bool {
+        text.unicodeScalars.count > maximumTranscriptLength
+    }
 
     var menuBarSymbol: String {
         switch phase {
@@ -402,7 +433,8 @@ final class AppController {
     /// Stops the upload or the local run. The recording stays saved.
     /// During AI cleanup it skips only the cleanup: the plain transcript still goes out.
     func cancelTranscription() {
-        guard phase == .transcribing, hud.style?.isCancellable == true else { return }
+        // The phase decides, not the HUD: the menu offers Cancel before the HUD has caught up.
+        guard phase == .transcribing else { return }
         if let cleanupTask { cleanupTask.cancel() } else { job?.cancel() }
     }
 
@@ -437,8 +469,16 @@ final class AppController {
             return
         }
         let vocabulary = Vocabulary(settings.vocabulary)
-        let result = await transcript(of: audio, vocabulary: vocabulary, id: id)
+        var result = await transcript(of: audio, vocabulary: vocabulary, id: id)
         job = nil
+        if Task.isCancelled {
+            // The reply can arrive just before Cancel and be picked up just after it. Cancel wins,
+            // and it has to win here: past this point the recording is deleted.
+            result = .failure(.cancelled)
+        } else if case .success(let transcript) = result, Self.isOversized(transcript.text) {
+            Self.log.notice("transcription rejected id=\(id, privacy: .public) reason=oversized")
+            result = .failure(.failed(Self.oversizedMessage))
+        }
 
         var text: String
         let transcription: Transcription
@@ -461,7 +501,7 @@ final class AppController {
             let invented = Hallucinations.isLikely(
                 transcript.text, prompt: vocabulary.prompt, voicedDuration: audio.voicedDuration
             )
-            text = invented ? "" : vocabulary.correct(transcript.text)
+            text = invented ? "" : PlainText.singleLine(vocabulary.correct(transcript.text))
         }
 
         var cleanupWarning: String?
@@ -490,7 +530,7 @@ final class AppController {
 
         switch delivery {
         case .copy:
-            Paster.copy(text)
+            outside.copy(text)
             outcome = "copied"
             phase = .idle
             notify(["Copied. Press ⌘V to paste.", cleanupWarning].compactMap(\.self).joined(separator: " "))
@@ -514,6 +554,10 @@ final class AppController {
     /// Local Whisper when it's the provider. Otherwise the cloud first (unless we know we're offline),
     /// then local Whisper if the user turned it on as a fallback.
     private func transcript(of audio: Audio, vocabulary: Vocabulary, id: String) async -> Result<Transcription, Stop> {
+        if let transcribe = outside.transcribe {
+            hud.show(.transcribing(attempt: 1, total: 1))
+            return .success(await transcribe())
+        }
         let provider = settings.provider
         let attempts = settings.cloudAttempts
         if provider == .local {
@@ -655,13 +699,21 @@ final class AppController {
                                                   requestTimeout: Retry.requestTimeout(within: budget))
                 )
             let seconds = (ContinuousClock.now - started).formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1)))
-            return text.isEmpty ? "Heard nothing (\(seconds)). Speak while it listens." : "“\(text)” · \(seconds)"
+            return Self.testResult(text, took: seconds)
         } catch {
             return error.localizedDescription
         }
     }
 
     static let testDuration: TimeInterval = 4
+
+    static func testResult(_ text: String, took seconds: String) -> String {
+        guard !isOversized(text) else { return "\(oversizedMessage) (\(seconds))" }
+        let line = PlainText.singleLine(text)
+        return line.isEmpty
+            ? "Heard nothing (\(seconds)). Speak while it listens."
+            : "“\(PlainText.preview(line, limit: 300))” · \(seconds)"
+    }
 
     /// A newer version is out: one quiet note, unless a take is in progress. The menu keeps the link.
     private func announceUpdate(_ version: String) {
@@ -699,16 +751,26 @@ final class AppController {
             // Optional, so it gets little patience: past the limit the plain transcript goes out.
             let language = settings.language
             let task = Task {
-                try await Retry.run(
+                if let cleanUp = outside.cleanUp { return try await cleanUp() }
+                return try await Retry.run(
                     { try await cleanup.clean(text, replacements: replacements, language: language) },
                     until: .now + Self.cleanupDeadline(for: text)
                 )
             }
             cleanupTask = task
             defer { cleanupTask = nil }
-            let reply = try await task.value
+            let result = await task.result
+            // As with Cancel, Skip wins over whatever had just arrived: a reply or a failure.
+            // So look before unwrapping; `task.value` would throw the failure first.
+            if task.isCancelled { throw CancellationError() }
+            let reply = try result.get()
+            guard !Self.isOversized(reply) else {
+                outcome = "rejected"
+                Self.log.notice("cleanup rejected: reply too long")
+                return (text, TextCleanup.rejectionMessage)
+            }
             // Judge exactly the text that would be pasted.
-            let cleaned = vocabulary.correct(reply)
+            let cleaned = PlainText.singleLine(vocabulary.correct(reply))
             guard TextCleanup.isAllowed(original: text, cleaned: cleaned, replacements: replacements) else {
                 outcome = "rejected"
                 // Never log the dictated words.

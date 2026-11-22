@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
+import Synchronization
 
 /// Inserts text into the focused field: put it on the clipboard, send ⌘V, then put the user's
 /// previous clipboard back. This works in native, Electron and browser apps alike.
@@ -56,6 +57,7 @@ enum Paster {
     }
 
     static func paste(_ text: String, into target: PasteTarget?) async -> Outcome {
+        let text = PlainText.singleLine(text)
         let pasteboard = NSPasteboard.general
 
         guard isTrusted else {
@@ -132,9 +134,9 @@ enum Paster {
     }
 
     /// Leaves the text on the clipboard as a normal, lasting item for the user to paste themselves.
-    static func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+    static func copy(_ text: String, to pasteboard: NSPasteboard = .general) {
+        pasteboard.clearContents()
+        pasteboard.setString(PlainText.singleLine(text), forType: .string)
     }
 
     private static func snapshot(of pasteboard: NSPasteboard) -> [NSPasteboardItem] {
@@ -160,18 +162,18 @@ enum Paster {
         return false
     }
 
-    /// Supplies the promised transcript and records that someone asked for it. The pasteboard calls
-    /// it on the main thread, while `paste` is suspended in its wait.
-    @MainActor
-    private final class ReadWatcher: NSObject, NSPasteboardItemDataProvider {
+    /// Supplies the promised transcript and records that someone asked for it. Not on the main actor:
+    /// AppKit fulfils a promise on whichever thread reads it, so assuming the main one crashed.
+    final class ReadWatcher: NSObject, NSPasteboardItemDataProvider, Sendable {
         private let text: String
-        private(set) var wasRead = false
+        private let read = Mutex(false)
+        var wasRead: Bool { read.withLock { $0 } }
 
         init(text: String) { self.text = text }
 
-        nonisolated func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+        func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
             item.setString(text, forType: type)
-            MainActor.assumeIsolated { wasRead = true }
+            read.withLock { $0 = true }
         }
     }
 

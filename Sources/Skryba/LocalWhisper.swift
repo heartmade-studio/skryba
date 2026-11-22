@@ -51,9 +51,10 @@ struct LocalWhisper {
         guard let executable = executableURL else { throw Failure.executableMissing }
         guard let model = modelURL else { throw Failure.modelMissing }
 
-        let work = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pl.heartmade.skryba-local-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        // Inside the recorder's folder, so launch/quit cleanup also removes what a crash left behind.
+        try FileManager.default.createPrivateDirectory(at: AudioRecorder.directory)
+        let work = AudioRecorder.directory.appendingPathComponent("local-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createPrivateDirectory(at: work)
         defer { try? FileManager.default.removeItem(at: work) }
 
         let wav = work.appendingPathComponent("audio.wav")

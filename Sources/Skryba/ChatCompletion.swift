@@ -70,7 +70,10 @@ struct ChatRequest: Encodable, Sendable {
         if let reasoning = message?.reasoningContent ?? message?.reasoning {
             parts.append("reasoning \(reasoning.count) chars")
         }
-        if let reason = reply.choices?.first?.finishReason { parts.append("finish \(reason)") }
+        if let reason = reply.choices?.first?.finishReason {
+            // This goes to a public log, so never a provider's own wording.
+            parts.append("finish \(["stop", "length"].contains(reason) ? reason : "other")")
+        }
         return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 

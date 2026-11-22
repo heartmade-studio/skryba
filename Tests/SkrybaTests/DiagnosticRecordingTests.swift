@@ -4,16 +4,15 @@ import Testing
 
 @MainActor
 struct DiagnosticRecordingTests {
-    private func fixture() throws -> (URL, UserDefaults, String) {
+    private func fixture() throws -> (URL, UserDefaults) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-        let suite = "SkrybaDiagnosticTests-\(UUID().uuidString)"
-        return (root, try #require(UserDefaults(suiteName: suite)), suite)
+        return (root, MemoryDefaults())
     }
 
     @Test func aRequestedCopySurvivesDeletionOfTheOriginalAndIsOneShot() throws {
-        let (root, defaults, suite) = try fixture()
-        defer { try? FileManager.default.removeItem(at: root); defaults.removePersistentDomain(forName: suite) }
+        let (root, defaults) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("original.m4a")
         let bytes = Data("controlled test audio".utf8)
         try bytes.write(to: source)
@@ -35,8 +34,8 @@ struct DiagnosticRecordingTests {
     }
 
     @Test func unarmedOrShortTakesDoNotWriteOrConsumeTheRequest() throws {
-        let (root, defaults, suite) = try fixture()
-        defer { try? FileManager.default.removeItem(at: root); defaults.removePersistentDomain(forName: suite) }
+        let (root, defaults) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
         let missing = root.appendingPathComponent("missing.m4a")
         let folder = root.appendingPathComponent("diagnostic")
         #expect(try DiagnosticRecording.captureIfRequested(missing, duration: 56, defaults: defaults, directory: folder) == nil)
@@ -47,8 +46,8 @@ struct DiagnosticRecordingTests {
     }
 
     @Test func aFailedCopyLeavesTheRequestArmed() throws {
-        let (root, defaults, suite) = try fixture()
-        defer { try? FileManager.default.removeItem(at: root); defaults.removePersistentDomain(forName: suite) }
+        let (root, defaults) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
         defaults.set(true, forKey: DiagnosticRecording.requestKey)
         #expect(throws: (any Error).self) {
             try DiagnosticRecording.captureIfRequested(root.appendingPathComponent("missing.m4a"), duration: 56,
@@ -58,8 +57,8 @@ struct DiagnosticRecordingTests {
     }
 
     @Test func diagnosticAudioExpiresAfterSevenDays() throws {
-        let (root, defaults, suite) = try fixture()
-        defer { try? FileManager.default.removeItem(at: root); defaults.removePersistentDomain(forName: suite) }
+        let (root, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("old.m4a")
         try Data("test audio".utf8).write(to: file)
         let old = Date.now.addingTimeInterval(-DiagnosticRecording.maximumAge - 60)

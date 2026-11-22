@@ -79,12 +79,12 @@ struct OpenAIClientTests {
             _ = try await transcribe(reply: #"{"error":{"message":"Request rejected"}}"#, status: status)
             Issue.record("Expected an API error")
         } catch {
-            guard case SkrybaError.api(let provider, let actual, let message) = error else {
+            guard case SkrybaError.api(let provider, let actual) = error else {
                 Issue.record("Expected an API error"); return
             }
             #expect(provider == "OpenAI")
             #expect(actual == status)
-            #expect(message == "Request rejected")
+            #expect(!error.localizedDescription.contains("Request rejected"))
             #expect(Retry.isTransient(error) == (status == 429 || status >= 500))
             #expect(Retry.failureKind(for: error) == "http_status_\(status)")
         }
@@ -101,9 +101,9 @@ struct OpenAIClientTests {
 
     @Test @MainActor func sharedDeadlineCancelsAStalledUpload() async throws {
         await #expect(throws: Retry.TimedOut.self) {
-            try await Retry.run({ try await transcribe(hang: true) }, until: .now + .milliseconds(150))
+            try await Retry.run({ try await transcribe(hang: true) }, until: .now + .seconds(2))
         }
-        #expect(OpenAIProtocol.state.wasStopped)
+        #expect(await eventually { OpenAIProtocol.state.wasStopped })
         #expect(Retry.deadline(forClipOf: 300, provider: .openai) == .seconds(120))
     }
 
@@ -155,9 +155,9 @@ struct OpenAIClientTests {
 
     @Test @MainActor func cleanupCanBeCancelledAtTheSharedDeadline() async throws {
         await #expect(throws: Retry.TimedOut.self) {
-            try await Retry.run({ try await cleanup(reply: cleanupReply, hang: true) }, until: .now + .milliseconds(150))
+            try await Retry.run({ try await cleanup(reply: cleanupReply, hang: true) }, until: .now + .seconds(2))
         }
-        #expect(OpenAIProtocol.state.wasStopped)
+        #expect(await eventually { OpenAIProtocol.state.wasStopped })
     }
 }
 

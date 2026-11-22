@@ -35,7 +35,7 @@ struct ShortcutRecorder: View {
         }
         let modifiers = event.modifierFlags.intersection(Shortcut.supportedModifiers)
         // A bare letter would fire while typing; only F-keys may go without modifiers.
-        // macOS 15+ also refuses global hotkeys whose only modifiers are ⌥ or ⌥⇧.
+        // macOS also refuses global hotkeys whose only modifiers are ⌥ or ⌥⇧.
         let isValid = Shortcut.isFunctionKey(event.keyCode)
             || (!modifiers.isEmpty && modifiers != .option && modifiers != [.option, .shift])
         guard isValid else {

@@ -41,13 +41,19 @@ final class AudioRecorder {
 
     /// Recordings live only here, inside the per-user temporary directory, and only for one take.
     nonisolated static let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("pl.heartmade.skryba", isDirectory: true)
+        .appendingPathComponent(folderName, isDirectory: true)
+    private nonisolated static let folderName = "pl.heartmade.skryba"
 
-    /// Deletes any recording left behind by a crash or force quit. Call at launch and at quit,
-    /// when no take can be in flight.
-    static func removeLeftovers() {
-        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        for file in files {
+    /// Deletes any audio or transcript left behind by a crash or force quit. Call at launch and at
+    /// quit, when no take can be in flight.
+    static func removeLeftovers(in temporary: URL = FileManager.default.temporaryDirectory) {
+        func contents(of folder: URL) -> [URL] {
+            (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        }
+        let current = contents(of: temporary.appendingPathComponent(folderName, isDirectory: true))
+        // Up to 1.7.0, local Whisper worked in folders of its own next to this one.
+        let legacy = contents(of: temporary).filter { $0.lastPathComponent.hasPrefix("\(folderName)-local-") }
+        for file in current + legacy {
             remove(file)
         }
     }
@@ -64,7 +70,7 @@ final class AudioRecorder {
     }
 
     func start() throws {
-        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        try FileManager.default.createPrivateDirectory(at: Self.directory)
         let url = Self.directory.appendingPathComponent("\(UUID().uuidString).m4a")
         let recorder = try AVAudioRecorder(url: url, settings: Self.settings)
         recorder.isMeteringEnabled = true

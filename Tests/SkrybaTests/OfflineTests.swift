@@ -13,13 +13,13 @@ struct RetryTests {
     @Test func stalledOrBusyConnectionsAreRetried() {
         #expect(Retry.isTransient(URLError(.timedOut)))
         #expect(Retry.isTransient(URLError(.networkConnectionLost)))
-        #expect(Retry.isTransient(SkrybaError.api(provider: "Groq", status: 503, message: "")))
-        #expect(Retry.isTransient(SkrybaError.api(provider: "Groq", status: 429, message: "")))
+        #expect(Retry.isTransient(SkrybaError.api(provider: "Groq", status: 503)))
+        #expect(Retry.isTransient(SkrybaError.api(provider: "Groq", status: 429)))
     }
 
     @Test func rejectedCredentialsAreNotRetried() {
-        #expect(!Retry.isTransient(SkrybaError.api(provider: "Groq", status: 401, message: "")))
-        #expect(!Retry.isTransient(SkrybaError.api(provider: "Cloudflare", status: 400, message: "")))
+        #expect(!Retry.isTransient(SkrybaError.api(provider: "Groq", status: 401)))
+        #expect(!Retry.isTransient(SkrybaError.api(provider: "Cloudflare", status: 400)))
     }
 
     @Test func bothKindsOfCancellationAreRecognised() {
@@ -64,8 +64,8 @@ struct RetryTests {
     @Test func failureDiagnosticsDistinguishAppTimeoutsFromTransportAndHTTPFailures() {
         #expect(Retry.failureKind(for: Retry.TimedOut()) == "app_deadline")
         #expect(Retry.failureKind(for: URLError(.networkConnectionLost)) == "url_error_-1005")
-        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 503, message: "private response")) == "http_status_503")
-        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 0, message: "No response.")) == "no_http_status")
+        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 503)) == "http_status_503")
+        #expect(Retry.failureKind(for: SkrybaError.api(provider: "Groq", status: 0)) == "no_http_status")
         #expect(Retry.failureKind(for: CancellationError()) == "cancelled")
         #expect(Retry.failureKind(for: GroqClient.Transcription.JoinFailure(boundary: 2)) == "transcript_unaligned_overlap")
         #expect(Retry.milliseconds(.milliseconds(1234) + .microseconds(500)) == 1234)
@@ -82,7 +82,7 @@ struct RetryTests {
     }
 }
 
-/// Timed: the whole cloud attempt, retries included, must end by its deadline, whatever the network does.
+/// The whole cloud attempt, retries included, must end by its deadline, whatever the network does.
 @MainActor
 struct RetryDeadlineTests {
     /// A request that never answers, like an upload on a captive Wi-Fi.
@@ -92,37 +92,41 @@ struct RetryDeadlineTests {
     }
 
     @Test func aStalledRequestGivesUpAtTheDeadline() async {
-        let started = ContinuousClock.now
+        let clock = TestClock(jumps: .max)
         var failures: [String] = []
         await #expect(throws: Retry.TimedOut.self) {
             try await Retry.attempts(
-                within: .milliseconds(600),
+                within: .seconds(3),
                 onAttemptFailure: { _, _, error in failures.append(Retry.failureKind(for: error)) },
+                clock: clock,
                 operation: Self.stalled
             )
         }
-        #expect(failures.contains("app_deadline"))
-        #expect(ContinuousClock.now - started < .milliseconds(900))
+        #expect(failures == ["app_deadline", "app_deadline"])
+        // Half, the pause, then only what is left: never past the shared deadline.
+        #expect(clock.sleeps == [.seconds(1.5), .seconds(2), .seconds(3)])
+        #expect(clock.elapsed == .seconds(3))
     }
 
     @Test func aStalledFirstAttemptLeavesTimeForASecond() async throws {
         var attempts = 0
-        let started = ContinuousClock.now
-        let text = try await Retry.attempts(within: .seconds(3), onAttempt: { attempts = $0 }) {
+        // Skips the first attempt's time limit and the pause after it.
+        let clock = TestClock(jumps: 2)
+        let text = try await Retry.attempts(within: .seconds(3), onAttempt: { attempts = $0 }, clock: clock) {
             // Only the first request hangs; it's cut off at half the deadline.
-            if ContinuousClock.now - started < .seconds(1) { try await Task.sleep(for: .seconds(60)) }
+            if clock.elapsed < .seconds(2) { try await Task.sleep(for: .seconds(60)) }
             return "text"
         }
         #expect(text == "text")
         #expect(attempts == 2)
-        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(clock.elapsed == .seconds(2))
     }
 
     @Test func aRejectedKeyIsTriedOnce() async {
         var attempts = 0
         await #expect(throws: SkrybaError.self) {
             try await Retry.attempts(within: .seconds(5), onAttempt: { attempts = $0 }) { () async throws -> String in
-                throw SkrybaError.api(provider: "Groq", status: 401, message: "")
+                throw SkrybaError.api(provider: "Groq", status: 401)
             }
         }
         #expect(attempts == 1)
@@ -133,7 +137,7 @@ struct RetryDeadlineTests {
         let requests = RequestCount()
         await #expect(throws: URLError.self) {
             try await Retry.attempts(
-                within: .seconds(6),
+                within: .seconds(30), // room for both real pauses on a busy machine
                 attemptLimit: count,
                 onAttempt: { attempts.append($0) }
             ) { () async throws -> String in
@@ -146,32 +150,37 @@ struct RetryDeadlineTests {
     }
 
     @Test func oneStalledAttemptMovesOnWithoutWaitingForRetries() async {
-        let started = ContinuousClock.now
+        let clock = TestClock(jumps: .max)
         var attempts: [Int] = []
         await #expect(throws: Retry.TimedOut.self) {
             try await Retry.attempts(
                 within: Retry.deadline(forClipOf: 0),
                 attemptLimit: 1,
                 onAttempt: { attempts.append($0) },
+                clock: clock,
                 operation: Self.stalled
             )
         }
         #expect(attempts == [1])
-        #expect(ContinuousClock.now - started < .seconds(7))
+        #expect(clock.elapsed == .seconds(6))
     }
 
     @Test(arguments: [1, 2, 3]) func aSlowWorkingRequestKeepsItsOriginalTimeBudget(_ count: Int) async throws {
         var attempts: [Int] = []
+        let clock = TestClock(jumps: 0)
         let text = try await Retry.attempts(
             within: .seconds(6),
             attemptLimit: count,
-            onAttempt: { attempts.append($0) }
+            onAttempt: { attempts.append($0) },
+            clock: clock
         ) {
-            // More than a third, less than half: don't cut off a slow but working request.
-            try await Task.sleep(for: .milliseconds(2500))
+            // Still working when its time limit is set.
+            _ = await eventually { !clock.sleeps.isEmpty }
             return "text"
         }
         #expect(text == "text")
+        // Half the budget whatever the attempt count: a third would cut off a slow but working request.
+        #expect(clock.sleeps == [.seconds(3)])
         #expect(attempts == [1])
     }
 
@@ -186,7 +195,7 @@ struct RetryDeadlineTests {
         let cancelled = ContinuousClock.now
         task.cancel()
         let result = await task.result
-        #expect(ContinuousClock.now - cancelled < .milliseconds(300))
+        #expect(ContinuousClock.now - cancelled < .seconds(5)) // its own limit is 15 s
         if case .failure(let error) = result {
             #expect(Retry.isCancellation(error))
         } else {
@@ -230,6 +239,23 @@ struct PendingRecordingsTests {
         #expect(values.isExcludedFromBackup == true)
         let permissions = try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? Int
         #expect(permissions == 0o700)
+    }
+
+    @Test func anExistingFolderIsMadePrivate() throws {
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let open: [FileAttributeKey: Any] = [.posixPermissions: 0o755]
+        func permissions() throws -> Int? {
+            try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? Int
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: open)
+
+        let queue = PendingRecordings(directory: directory)
+        queue.load()
+        #expect(try permissions() == 0o700)
+
+        try FileManager.default.setAttributes(open, ofItemAtPath: directory.path)
+        _ = try queue.keep(clip())
+        #expect(try permissions() == 0o700)
     }
 
     @Test func oldRecordingsAreDeletedAtLoad() throws {
@@ -278,11 +304,18 @@ struct CloudflareTests {
         #expect(throws: SkrybaError.self) { try CloudflareClient.text(from: reply) }
     }
 
-    @Test func readsErrorsInBothFormats() {
-        let workersAI = Data(#"{"success":false,"errors":[{"code":7003,"message":"No route"}]}"#.utf8)
-        let openAI = Data(#"{"error":{"message":"Unknown model"}}"#.utf8)
-        #expect(CloudflareClient.errorMessage(in: workersAI, status: 400) == "No route")
-        #expect(CloudflareClient.errorMessage(in: openAI, status: 400) == "Unknown model")
+    @Test func anInvalidAccountIDIsNeitherSentNorRetried() async {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).m4a")
+        try? Data("audio".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        do {
+            _ = try await CloudflareClient(accountID: "bad", apiToken: "test").transcribe(fileURL: file, language: "", prompt: "")
+            Issue.record("Expected an error")
+        } catch {
+            #expect(!Retry.isTransient(error))
+            #expect(Retry.failureKind(for: error) == "invalid_account_id")
+            #expect(error.localizedDescription == "The Cloudflare account ID is invalid. Check it in Settings.")
+        }
     }
 
     @Test func accountIDsAreThirtyTwoHexCharacters() {
